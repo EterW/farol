@@ -1,6 +1,6 @@
 """Sessão ao vivo (uma por aba do navegador). Usa o DerivHub compartilhado e exatamente o mesmo
 código do backtest: estrategias.gerar_sinais, backtest.executar/resolver (via ranking) e
-timeframes.agregar."""
+timeframes.agregar. A estratégia líder (com histerese) e os avisos vêm de binarias/avisos.py."""
 import asyncio
 import csv
 import json
@@ -10,11 +10,13 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from . import mercado, scanner, sinal, veredito
+from . import mercado, progresso, scanner, sinal, veredito
+from .avisos import MotorAvisos, SeletorLider, nome_ativo
 from .backtest import ConfigBacktest, resolver
 from .config import (ATIVOS_SCANNER, EMPATE_PADRAO, FOLGA_FECHAMENTO, JANELA_RANKING, MIN_OPERACOES,
-                     N_HISTORICO, N_VELAS_GRAFICO, N_VELAS_PREVIA, PASTA_RESULTADOS)
-from .estrategias import ESTRATEGIAS, POR_ID, ultimo_valor
+                     N_HISTORICO, N_VELAS_GRAFICO, N_VELAS_PREVIA, PASTA_RESULTADOS, PROGRESSO_LIMITE,
+                     PROGRESSO_LIMITE_MAX, PROGRESSO_LIMITE_MIN)
+from .estrategias import ESTRATEGIAS, POR_ID
 from .hub import DerivHub, SerieVelas
 from .log import obter
 from .ranking import calcular_ranking
@@ -27,8 +29,11 @@ COLUNAS_CSV = ["data_sinal", "data_entrada", "ativo", "timeframe", "estrategia",
                "expiracao", "preco_entrada", "preco_saida", "resultado"]
 
 
+NOMES = {e.id: e.nome for e in ESTRATEGIAS}
+
+
 class NavegadorFechado(Exception):
-    pass
+    """O navegador fechou a aba/conexão: a sessão para de enviar."""
 
 
 def fmt_data(epoch: int) -> str:
@@ -76,6 +81,9 @@ class Sessao:
         self.series: list[SerieVelas] = []
         self.ativas: set[str] = set(POR_ID)
         self.observacao = False          # modo observação (só muda o que a tela mostra, nunca o ENTRAR)
+        self.seletor = SeletorLider()
+        self.motor = MotorAvisos(limite=PROGRESSO_LIMITE)
+        self.ranking: dict | None = None
         self.analise: dict | None = None
         self.operacoes: dict[str, dict] = {}
         self._seq = 0
@@ -97,6 +105,41 @@ class Sessao:
     async def status(self, texto: str, nivel: str = "info") -> None:
         await self.enviar("status", texto=texto, nivel=nivel)
 
+    async def avisar(self, lista: list[dict]) -> None:
+        for a in lista:
+            await self.enviar("aviso", **a)
+
+    @property
+    def ativo(self) -> str:
+        return nome_ativo(self.simbolo)
+
+    # ------------------------------------------------------------------ preferências do navegador
+    async def configurar(self, msg: dict) -> None:
+        """Aplica preferências JÁ do formato certo (o servidor valida antes): ativas, observação,
+        avisar candidatas não comprovadas e limite do aviso de formação."""
+        if isinstance(msg.get("ativas"), list):
+            novas = {i for i in msg["ativas"] if i in POR_ID}
+            if novas != self.ativas:
+                self.ativas = novas
+                if self.ranking is not None:   # desmarcar a líder tira ela do posto na hora
+                    troca = self.seletor.atualizar(self.ranking, self.ativas, contar=False)
+                    self.ranking = self._com_lider(self.ranking)
+                    if troca["trocou"]:
+                        await self.avisar(self.motor.fechamento({}, 0, self.ativo, troca, NOMES))
+        if isinstance(msg.get("observacao"), bool):
+            self.observacao = msg["observacao"]
+        if isinstance(msg.get("avisar_obs"), bool):
+            self.motor.avisar_obs = msg["avisar_obs"]
+        lim = msg.get("limite_formacao")
+        if isinstance(lim, int) and not isinstance(lim, bool) and PROGRESSO_LIMITE_MIN <= lim <= PROGRESSO_LIMITE_MAX:
+            self.motor.limite = lim
+
+    def _com_lider(self, ranking: dict) -> dict:
+        s = self.seletor
+        return {**ranking, "lider": s.atual,
+                "lider_info": {"desafiante": s.desafiante, "contagem": s.contagem,
+                               "confirmacao": s.velas_confirmacao, "margem_ic": s.margem_ic}}
+
     # ------------------------------------------------------------------ controle
     async def iniciar(self, simbolo: str, timeframe: str, expiracao: int, payout: float) -> None:
         await self.parar()
@@ -112,9 +155,11 @@ class Sessao:
         self.n_base = (N_HISTORICO + 2) * self.fator
         self.hold = min(60.0, max(10.0, seg * 0.25))   # quanto tempo mostrar ENTRAR AGORA / CONFLITO
         self.ranking = None
-        self.preparo: dict[str, str | None] = {}
+        self.seletor = SeletorLider()
+        self.motor = MotorAvisos(limite=self.motor.limite, avisar_obs=self.motor.avisar_obs)
         self.recentes: dict[str, dict] = {}
         self.decisao_fixa: dict | None = None
+        self._cache_prog: tuple = (None, None)
         self.tarefas = [asyncio.create_task(self._proteger(c, nome)) for c, nome in (
             (self._rodar(), "ativo"), (self._rodar_scanner(), "scanner"), (self._vigiar_conexao(), "conexão"))]
 
@@ -139,7 +184,7 @@ class Sessao:
             await coro
         except (asyncio.CancelledError, NavegadorFechado):
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - última barreira da tarefa: registra e avisa a tela
             log.exception("Sessão %s %s: tarefa '%s' falhou", self.simbolo, self.tf, nome)
             try:
                 await self.status(f"Erro interno ({nome}): {e}. Detalhes em resultados/erros.log", "erro")
@@ -222,8 +267,9 @@ class Sessao:
     async def _inicializar(self, formando: pd.DataFrame) -> None:
         df = self.df
         ranking, analise = await asyncio.to_thread(self._calcular, df, formando, set(self.ativas))
+        self.seletor.atualizar(ranking, self.ativas)
+        ranking = self._com_lider(ranking)
         self.ranking, self.analise = ranking, analise
-        self.preparo = {l["id"]: l["preparo"] for l in ranking["linhas"]}
         # setas do histórico (só a parte que aparece no gráfico)
         grafico = df.tail(N_VELAS_GRAFICO)
         inicio = int(grafico["epoch"].iat[0])
@@ -231,7 +277,7 @@ class Sessao:
         for est in ESTRATEGIAS:
             try:
                 s = est.gerar_sinais(df)
-            except Exception:
+            except Exception:  # noqa: BLE001 - uma estratégia com bug não pode derrubar a sessão
                 log.exception("Estratégia %s falhou no histórico", est.id)
                 continue
             for i in s.index[s.isin(["CALL", "PUT"])]:
@@ -244,13 +290,12 @@ class Sessao:
                           janela_entrada=self.hold,
                           velas=velas, sinais=marcas, n_velas=len(df))
         await self._enviar_analise(ranking, analise)
-        dec = sinal.decidir(ranking, {}, self.preparo, self.ativas)
-        estados = {k: {"estado": "SE PREPARANDO", "dir": v} for k, v in self.preparo.items() if v}
-        await self.enviar("decisao", **dec, novo=False, t=self.ultima_fechada, veredito=self._veredito(dec, estados))
+        dec = sinal.decidir(ranking, {}, {}, self.ativas, lider=self.seletor.atual)
+        await self.enviar("decisao", **dec, novo=False, t=self.ultima_fechada, veredito=self._veredito(dec, {}))
 
-    def _veredito(self, dec: dict, estados: dict) -> dict:
+    def _veredito(self, dec: dict, estados: dict, prog: dict | None = None) -> dict:
         humano = (self.analise or {}).get("humano")
-        return veredito.montar(dec, self.ranking, humano, self.observacao, estados, self.ativas)
+        return veredito.montar(dec, self.ranking, humano, self.observacao, estados, self.ativas, prog)
 
     async def _enviar_analise(self, ranking: dict, analise: dict) -> None:
         await self.enviar("ranking", **ranking)
@@ -271,15 +316,18 @@ class Sessao:
                 op["t_entrada"] = int(depois["epoch"].iat[0])
                 self._registrar(op, entrada, saida, res)
                 del self.operacoes[est_id]
-                await self.enviar("resultado", op=op["n"], id=est_id, resultado=res, entrada=entrada, saida=saida)
+                await self.enviar("resultado", op=op["n"], id=est_id, resultado=res, entrada=entrada, saida=saida,
+                                  principal=bool(op.get("principal")))
+                await self.avisar(self.motor.resultado(op, res, self.ativo))
 
         # 2) ranking + análise na vela que acabou de fechar (em thread: não trava o servidor)
         ativas = set(self.ativas)
         ranking, analise = await asyncio.to_thread(self._calcular, df, formando, ativas)
+        troca = self.seletor.atualizar(ranking, ativas)
+        ranking = self._com_lider(ranking)
         self.ranking, self.analise = ranking, analise
-        sinais = {l["id"]: l["sinal"] for l in ranking["linhas"]}
-        self.preparo = {l["id"]: l["preparo"] for l in ranking["linhas"]}
-        dec = sinal.decidir(ranking, sinais, self.preparo, ativas)
+        sinais = {linha["id"]: linha["sinal"] for linha in ranking["linhas"]}
+        dec = sinal.decidir(ranking, sinais, {}, ativas, lider=self.seletor.atual)
         t = int(epochs[-1])
         if n_novas > 1:
             log.warning("%s %s: %d velas fecharam de uma vez (queda/atraso); só a última foi avaliada",
@@ -304,7 +352,9 @@ class Sessao:
         self.decisao_fixa = {**dec, "ate": time.time() + self.hold} if dec["estado"] in ("ENTRAR", "CONFLITO") else None
         await self._enviar_analise(ranking, analise)
         estados = {k: {"estado": "SINAL", "dir": v} for k, v in sinais.items() if v}
-        await self.enviar("decisao", **dec, novo=True, t=t, veredito=self._veredito(dec, estados))
+        ver = self._veredito(dec, estados)
+        await self.enviar("decisao", **dec, novo=True, t=t, veredito=ver)
+        await self.avisar(self.motor.fechamento(ver, t + self.seg, self.ativo, troca, NOMES))
 
     def _registrar(self, op: dict, entrada, saida, resultado: str) -> None:
         try:
@@ -319,42 +369,77 @@ class Sessao:
         except OSError:
             log.exception("Não foi possível gravar %s (arquivo aberto no Excel?)", CSV_SINAIS)
 
-    def _previa(self, formando: pd.DataFrame) -> dict:
-        """O sinal já estaria valendo se a vela em formação fechasse agora? (só para SE PREPARANDO)"""
+    def _alvo_progresso(self) -> str | None:
+        """De quem medir o progresso completo: a líder; sem líder, a candidata do modo observação."""
+        if self.seletor.atual and self.seletor.atual in self.ativas:
+            return self.seletor.atual
+        if self.observacao and self.ranking:
+            cand = veredito.candidata(self.ranking, self.ativas)
+            return cand["id"] if cand else None
+        return None
+
+    def _formacao(self, formando: pd.DataFrame) -> tuple[dict, dict | None]:
+        """Condições de todas as estratégias na vela em formação (uma passada cada) + progresso
+        completo da líder/candidata. Roda em thread."""
         if not len(formando) or not len(self.df):
-            return {}
+            return {}, None
         parcial = pd.concat([self.df.tail(N_VELAS_PREVIA), formando], ignore_index=True)
-        saida = {}
+        rapidas = {}
         for est in ESTRATEGIAS:
             try:
-                saida[est.id] = ultimo_valor(est.gerar_sinais(parcial))
-            except Exception:
-                saida[est.id] = None
-        return saida
+                rapidas[est.id] = progresso.condicoes_agora(est, parcial)
+            except Exception:  # noqa: BLE001 - estratégia com bug: só ela fica sem estado
+                log.exception("Estratégia %s falhou na vela em formação", est.id)
+        alvo = self._alvo_progresso()
+        prog = None
+        if alvo in rapidas:
+            chave = (alvo, tuple(parcial.iloc[-1][["epoch", "open", "high", "low", "close"]]))
+            if self._cache_prog[0] == chave:
+                prog = self._cache_prog[1]
+            else:
+                prog = progresso.calcular(POR_ID[alvo], parcial)
+                self._cache_prog = (chave, prog)
+        return rapidas, prog
 
     async def _enviar_estado(self, formando: pd.DataFrame) -> None:
         if self.ranking is None:
             return
-        previa = await asyncio.to_thread(self._previa, formando)
+        rapidas, prog = await asyncio.to_thread(self._formacao, formando)
         agora = time.time()
+        lider = self.seletor.atual
+        limite = self.motor.limite
         lista = []
         for est in ESTRATEGIAS:
+            av = rapidas.get(est.id)
+            lado, cumpridas, total = progresso.melhor_lado(av) if av else (None, 0, 0)
+            pct = None
+            if prog and prog["id"] == est.id:
+                lado, cumpridas, total, pct = prog["dir"], prog["cumpridas"], prog["total"], prog["pct"]
             rec = self.recentes.get(est.id)
             if rec and agora < rec["ate"]:
-                estado, direcao = "SINAL", rec["dir"]
+                estado, lado = "SINAL", rec["dir"]
+            elif pct is not None and pct >= limite and lado:
+                estado = "FORMANDO"
+            elif lado and cumpridas:
+                estado = "PARCIAL"
             else:
-                direcao = previa.get(est.id) or self.preparo.get(est.id)
-                estado = "SE PREPARANDO" if direcao else "AGUARDANDO"
-            lista.append({"id": est.id, "estado": estado, "dir": direcao, "em_operacao": est.id in self.operacoes})
+                estado = "AGUARDANDO"
+            lista.append({"id": est.id, "estado": estado, "dir": lado, "cumpridas": cumpridas, "total": total,
+                          "pct": pct, "lider": est.id == lider, "em_operacao": est.id in self.operacoes})
         if self.decisao_fixa and agora < self.decisao_fixa["ate"]:
             principal = {k: v for k, v in self.decisao_fixa.items() if k != "ate"}
         else:
             self.decisao_fixa = None
-            principal = sinal.decidir(self.ranking, previa, self.preparo, self.ativas, previa=True)
+            previa = {k: v["sinal"] for k, v in rapidas.items()}
+            formando_lider = {lider: prog["dir"]} if (lider and prog and prog["id"] == lider
+                                                       and prog["pct"] >= limite and prog["dir"]) else {}
+            principal = sinal.decidir(self.ranking, previa, formando_lider, self.ativas, previa=True, lider=lider)
         estados = {x["id"]: x for x in lista}
-        await self.enviar("estado", estrategias=lista, principal=principal,
-                          veredito=self._veredito(principal, estados),
-                          fecha_em=self._proximo_fechamento(), agora=self.hub.agora())
+        ver = self._veredito(principal, estados, prog)
+        vela = int(formando["epoch"].iat[0]) if len(formando) else self._proximo_fechamento() - self.seg
+        await self.enviar("estado", estrategias=lista, principal=principal, veredito=ver, limite=limite,
+                          lider=lider, fecha_em=self._proximo_fechamento(), agora=self.hub.agora())
+        await self.avisar(self.motor.formacao(ver, prog, vela, self.ativo))
 
     # ------------------------------------------------------------------ scanner (Top 3)
     def _aberto(self, simbolo: str, s: SerieVelas, fechadas: pd.DataFrame) -> bool:
@@ -368,7 +453,7 @@ class Sessao:
         series = {sim: await self._obter(sim) for sim in simbolos}
         try:
             await self.hub.ativos()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - sem a lista o scanner segue (só não sabe se a bolsa abriu)
             log.warning("Lista de ativos indisponível para o scanner: %s", e)
         ultima_chave = None
         while True:

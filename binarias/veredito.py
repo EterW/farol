@@ -4,11 +4,13 @@ Recebe a decisão técnica de `sinal.decidir` e a traduz para 5 estados:
 
   ENTRAR      só com estratégia de vantagem comprovada (≥ min_ops e IC de Wilson acima do break-even)
               E sinal na vela que acabou de fechar. Reconfere a regra aqui (defesa em profundidade).
-  PREPARANDO  a estratégia comprovada está quase disparando.
+  PREPARANDO  a estratégia líder (comprovada) está se formando: progresso de formação acima do limite.
   AGUARDAR    nada a fazer (com o motivo em uma frase).
   CONFLITO    a estratégia comprovada diz um lado e outra relevante diz o outro.
   OBSERVACAO  modo observação ligado e NENHUMA estratégia comprovada: mostra a melhor candidata,
               com o rótulo "NÃO COMPROVADA" e sem som de entrada.
+
+`progresso` (binarias/progresso.py) vai junto no veredito da líder/candidata, para a barra de formação.
 
 Regra de honestidade: nunca dizemos que algo "vai ganhar". Toda probabilidade é ESTIMADA a partir do
 histórico recente e vem com intervalo de confiança, tamanho da amostra e break-even.
@@ -89,8 +91,9 @@ def _motivo_aguardar(humano: dict | None, observacao: bool) -> str:
 
 
 def montar(decisao: dict, ranking: dict, humano: dict | None = None, observacao: bool = False,
-           estados: dict | None = None, ativas: set | None = None) -> dict:
-    """`decisao`: saída de sinal.decidir. `estados`: {id: {"estado": ..., "dir": ...}} (vela atual)."""
+           estados: dict | None = None, ativas: set | None = None, progresso: dict | None = None) -> dict:
+    """`decisao`: saída de sinal.decidir. `estados`: {id: {"estado": "SINAL"|"FORMANDO"|..., "dir": ...}}
+    (vela atual). `progresso`: progresso de formação da líder (ou da candidata, no modo observação)."""
     be = ranking.get("break_even", calc_break_even(ranking.get("payout", 0.85)))
     min_ops = int(ranking.get("min_ops", 100))
     janela = ranking.get("janela")
@@ -101,7 +104,8 @@ def montar(decisao: dict, ranking: dict, humano: dict | None = None, observacao:
             "break_even": be, "min_ops": min_ops, "janela": janela, "expiracao": ranking.get("expiracao", 1),
             "detalhe": decisao.get("detalhe", ""), "opostos": decisao.get("opostos", []),
             "concordam": decisao.get("concordam", []), "rotulo": None, "som": None,
-            "comprovada": False, "prob": None}
+            "comprovada": False, "prob": None, "quando": None,
+            "progresso": progresso if progresso and progresso.get("id") == decisao.get("estrategia") else None}
 
     if est in ("ENTRAR", "PREPARANDO", "CONFLITO", "AGUARDANDO"):
         if not comprovada(linha, be, min_ops):
@@ -119,9 +123,9 @@ def montar(decisao: dict, ranking: dict, humano: dict | None = None, observacao:
                          f"Expiração: {exp} vela{'s' if exp > 1 else ''}."}
     if est == "PREPARANDO":
         d = decisao["dir"]
-        return {**base, "estado": "PREPARANDO", "titulo": "SE PREPARANDO", "som": "preparo",
-                "frase": f"“{decisao['nome']}” pode indicar {ACAO[d]} {SETA[d]} quando esta vela fechar. "
-                         "Ainda não entre: espere a confirmação."}
+        return {**base, "estado": "PREPARANDO", "titulo": "SE PREPARANDO", "som": "formando", "quando": "formando",
+                "frase": f"“{decisao['nome']}” está se formando e pode indicar {ACAO[d]} {SETA[d]} quando esta "
+                         "vela fechar. Ainda não entre: espere a confirmação."}
     if est == "CONFLITO":
         d = decisao["dir"]
         outro = "VENDA" if d == "CALL" else "COMPRA"
@@ -131,8 +135,8 @@ def montar(decisao: dict, ranking: dict, humano: dict | None = None, observacao:
                          f"{outro}. Quando as estratégias discordam, o melhor é ficar de fora."}
     if est == "AGUARDANDO":
         return {**base, "estado": "AGUARDAR", "titulo": "AGUARDAR", "dir": None, "acao": None, "seta": "",
-                "frase": f"Existe uma estratégia comprovada (“{decisao['nome']}”), mas ela ainda não deu sinal. "
-                         "Nada a fazer por enquanto."}
+                "frase": f"A estratégia líder (“{decisao['nome']}”) tem vantagem comprovada, mas ainda não está "
+                         "se formando. Nada a fazer por enquanto."}
 
     # SEM_SINAL: nenhuma estratégia comprovada
     cand = candidata(ranking, ativas) if observacao else None
@@ -140,10 +144,12 @@ def montar(decisao: dict, ranking: dict, humano: dict | None = None, observacao:
         return {**base, "estado": "AGUARDAR", "titulo": "AGUARDAR", "estrategia": None, "nome": None,
                 "dir": None, "acao": None, "seta": "", "frase": _motivo_aguardar(humano, observacao)}
     st = (estados or {}).get(cand["id"]) or {}
-    d = st.get("dir") if st.get("estado") in ("SINAL", "SE PREPARANDO") else None
+    d = st.get("dir") if st.get("estado") in ("SINAL", "FORMANDO") else None
+    quando = None
     if d:
-        quando = "agora" if st["estado"] == "SINAL" else "quando esta vela fechar (se preparando)"
-        frase = f"Melhor candidata do momento: “{cand['nome']}”. Ela indicaria {ACAO[d]} {SETA[d]} {quando}."
+        quando = "agora" if st["estado"] == "SINAL" else "formando"
+        txt = "agora" if quando == "agora" else "quando esta vela fechar (está se formando)"
+        frase = f"Melhor candidata do momento: “{cand['nome']}”. Ela indicaria {ACAO[d]} {SETA[d]} {txt}."
     else:
         frase = f"Melhor candidata do momento: “{cand['nome']}”. Ela não está indicando nada agora."
     # (só acontece se o usuário desmarcou a estratégia comprovada e nenhuma marcada tem dados)
@@ -151,6 +157,7 @@ def montar(decisao: dict, ranking: dict, humano: dict | None = None, observacao:
     return {**base, "estado": "OBSERVACAO", "titulo": "MODO OBSERVAÇÃO", "estrategia": cand["id"],
             "nome": cand["nome"], "dir": d, "acao": ACAO.get(d), "seta": SETA.get(d, ""),
             "rotulo": "DESMARCADA POR VOCÊ · apenas observação, não é recomendação" if desmarcada else ROTULO_OBS,
-            "som": None, "comprovada": False,
+            "som": None, "comprovada": False, "quando": quando,
+            "progresso": progresso if progresso and progresso.get("id") == cand["id"] else None,
             "prob": texto_probabilidade(cand["janela"], be, min_ops, janela),
             "frase": frase + " Nenhuma estratégia tem vantagem comprovada agora."}

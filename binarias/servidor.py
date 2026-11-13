@@ -1,6 +1,7 @@
 """Servidor do modo ao vivo (FastAPI + WebSocket) com UMA conexão compartilhada com a Deriv."""
 import argparse
 import os
+import re
 import threading
 import webbrowser
 from contextlib import asynccontextmanager
@@ -9,16 +10,43 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import mercado, scanner
-from .config import (ATIVOS_SCANNER, EXPIRACAO_PADRAO, JANELA_RANKING, MIN_OPERACOES, N_HISTORICO,
-                     PASTA_STATIC, PAYOUT_PADRAO, TIMEFRAMES_PRONTOS)
-from .estrategias import ESTRATEGIAS, EXPLICACAO, POR_ID
+from . import avisos, demo, mercado, progresso, scanner
+from .config import (ATIVOS_SCANNER, EXPIRACAO_PADRAO, JANELA_RANKING, MIN_OPERACOES, MIN_OPS_AMOSTRA,
+                     N_HISTORICO, PASTA_STATIC, PAYOUT_PADRAO, PROGRESSO_LIMITE, PROGRESSO_LIMITE_MAX,
+                     PROGRESSO_LIMITE_MIN, TIMEFRAMES_PRONTOS)
+from .estrategias import ESTRATEGIAS, EXPLICACAO
 from .hub import DerivHub
 from .log import configurar_log, obter
-from .sessao import CSV_SINAIS, Sessao
+from .sessao import CSV_SINAIS, NavegadorFechado, Sessao
+from .timeframes import nome_timeframe, parse_timeframe
 
 log = obter("servidor")
 hub = DerivHub()
+
+SIMBOLO_VALIDO = re.compile(r"^[A-Za-z0-9_]{1,40}$")
+EXPIRACAO_MAX = 60            # velas
+PAYOUT_MIN, PAYOUT_MAX = 1.0, 500.0   # em %
+TIMEFRAME_MAX = 86400         # D1
+
+
+def validar_assinatura(msg: dict) -> dict:
+    """Confere o pedido de assinatura do navegador. Levanta ValueError com mensagem clara."""
+    simbolo = str(msg.get("simbolo", "")).strip()
+    if not SIMBOLO_VALIDO.match(simbolo):
+        raise ValueError("código de ativo inválido (use letras, números e _; ex.: frxEURUSD, R_100)")
+    seg = parse_timeframe(str(msg.get("timeframe", "")))
+    if seg > TIMEFRAME_MAX:
+        raise ValueError("tempo gráfico máximo é D1")
+    try:
+        expiracao = int(msg.get("expiracao", EXPIRACAO_PADRAO))
+        payout = float(msg.get("payout", PAYOUT_PADRAO * 100))
+    except (TypeError, ValueError):
+        raise ValueError("expiração e payout precisam ser números") from None
+    if not 1 <= expiracao <= EXPIRACAO_MAX:
+        raise ValueError(f"expiração deve ficar entre 1 e {EXPIRACAO_MAX} velas")
+    if not PAYOUT_MIN <= payout <= PAYOUT_MAX:
+        raise ValueError(f"payout deve ficar entre {PAYOUT_MIN:.0f}% e {PAYOUT_MAX:.0f}%")
+    return {"simbolo": simbolo, "timeframe": nome_timeframe(seg), "expiracao": expiracao, "payout": payout / 100}
 
 
 @asynccontextmanager
@@ -44,6 +72,10 @@ async def api_config():
         "csv": CSV_SINAIS,
         "janela": JANELA_RANKING,
         "min_ops": MIN_OPERACOES,
+        "min_ops_amostra": MIN_OPS_AMOSTRA,
+        "limite_formacao": PROGRESSO_LIMITE,
+        "limite_formacao_faixa": [PROGRESSO_LIMITE_MIN, PROGRESSO_LIMITE_MAX],
+        "explicacao_progresso": progresso.EXPLICACAO,
         "n_historico": N_HISTORICO,
         "payout": PAYOUT_PADRAO,
         "expiracao": EXPIRACAO_PADRAO,
@@ -60,7 +92,7 @@ async def api_config():
 async def api_ativos():
     try:
         return await hub.ativos()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - qualquer falha vira 502 com a mensagem, e fica no log
         log.warning("Falha ao listar ativos: %s", e)
         return JSONResponse({"erro": str(e)}, status_code=502)
 
@@ -68,10 +100,15 @@ async def api_ativos():
 @app.get("/api/demo/{cenario}")
 async def api_demo(cenario: str):
     """Mensagens SIMULADAS de um cenário (a página com ?demo=<cenário> mostra a faixa de demonstração)."""
-    from . import demo
     if cenario not in demo.CENARIOS:
         return JSONResponse({"erro": f"use um de: {', '.join(demo.CENARIOS)}"}, status_code=404)
     return demo.mensagens(cenario)
+
+
+@app.get("/api/avisos/teste")
+async def api_avisos_teste():
+    """Os tipos de aviso com os textos reais (botão "Testar alertas")."""
+    return avisos.exemplos()
 
 
 @app.get("/api/status")
@@ -87,27 +124,28 @@ async def ws_navegador(ws: WebSocket):
     sessao = Sessao(ws, hub)
     try:
         while True:
-            msg = await ws.receive_json()
+            try:
+                msg = await ws.receive_json()
+            except ValueError:
+                await sessao.status("Mensagem inválida recebida (não é JSON).", "erro")
+                continue
             if not isinstance(msg, dict):
                 continue
-            if isinstance(msg.get("ativas"), list):
-                sessao.ativas = {i for i in msg["ativas"] if i in POR_ID}
-            if isinstance(msg.get("observacao"), bool):
-                sessao.observacao = msg["observacao"]
+            await sessao.configurar(msg)
             acao = msg.get("acao")
-            try:
-                if acao == "assinar":
-                    payout = float(msg.get("payout", PAYOUT_PADRAO * 100)) / 100
-                    await sessao.iniciar(str(msg["simbolo"]).strip(), str(msg["timeframe"]),
-                                         int(msg.get("expiracao", 1)), payout)
-                elif acao == "parar":
-                    await sessao.parar()
-                    await sessao.status("Desconectado.")
-            except (KeyError, TypeError, ValueError) as e:
-                await sessao.status(f"Pedido inválido: {e}", "erro")
-    except WebSocketDisconnect:
+            if acao == "assinar":
+                try:
+                    pedido = validar_assinatura(msg)
+                except ValueError as e:
+                    await sessao.status(f"Pedido inválido: {e}", "erro")
+                    continue
+                await sessao.iniciar(**pedido)
+            elif acao == "parar":
+                await sessao.parar()
+                await sessao.status("Desconectado.")
+    except (WebSocketDisconnect, NavegadorFechado):
         pass
-    except Exception:
+    except Exception:  # noqa: BLE001 - erro inesperado numa aba não pode derrubar o servidor
         log.exception("Erro na conexão com o navegador")
     finally:
         sessao.fechado = True

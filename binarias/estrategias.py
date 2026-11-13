@@ -1,23 +1,37 @@
-"""Estratégias de entrada — o MESMO código é usado pelo backtest, pelo ranking, pela validação
-e pelo modo ao vivo.
+"""Estratégias de entrada: o MESMO código serve ao backtest, ao ranking, à validação e ao ao vivo.
 
-Cada estratégia recebe o DataFrame de velas FECHADAS e devolve uma Series alinhada ao df com
-"CALL", "PUT" ou None. Um sinal na vela i significa: entrar na ABERTURA da vela i+1.
-Regra de ouro: o valor na vela i só pode depender das velas 0..i (há um teste automático
-que verifica isso truncando o futuro).
+Cada estratégia é descrita por uma lista de CONDIÇÕES com nome. O sinal é, por construção,
+"todas as condições cumpridas": CALL quando todas as condições de compra valem na vela, PUT quando
+todas as de venda valem (as duas ao mesmo tempo = não entra). Assim o progresso de formação
+(binarias/progresso.py) conta exatamente as mesmas condições que geram o sinal.
 
-A função de PREPARO tem a mesma assinatura. Um valor na vela i significa: "depois do fechamento
-da vela i a condição está quase completa — a próxima vela pode disparar nessa direção".
+Um sinal na vela i significa: entrar na ABERTURA da vela i+1. O valor na vela i só pode depender
+das velas 0..i (há um teste automático que trunca o futuro e confere).
 
-Para criar a sua: escreva as funções (df, **params) -> Series e registre em ESTRATEGIAS.
+Para criar a sua: escreva `minha_condicoes(df, **params) -> list[Condicao]`, a função de sinal
+`minha(df, **params) = _de_condicoes(minha_condicoes(df, **params))` e registre em ESTRATEGIAS.
+(Uma estratégia sem `condicoes` também funciona: o progresso usa o próprio sinal como condição única.)
 """
+
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Callable
+from typing import NamedTuple
 
 import pandas as pd
 
-from .indicadores import atr, bandas, cor, niveis_anteriores, rsi, sma
+from .indicadores import bandas, cor, niveis_anteriores, rsi, sma
+
+__all__ = ["ESTRATEGIAS", "EXPLICACAO", "POR_ID", "Condicao", "Estrategia", "ultimo_valor"]
+
+
+class Condicao(NamedTuple):
+    """Uma condição da estratégia, com o texto para a tela e as séries booleanas de cada lado."""
+
+    texto_call: str
+    texto_put: str
+    call: pd.Series
+    put: pd.Series
 
 
 # --------------------------------------------------------------------------- #
@@ -33,8 +47,25 @@ def _sinais(cond_call: pd.Series, cond_put: pd.Series) -> pd.Series:
     return s
 
 
-def _nada(df: pd.DataFrame) -> pd.Series:
-    return pd.Series(None, index=df.index, dtype=object)
+def _todas(series: list[pd.Series], index: pd.Index) -> pd.Series:
+    resultado = pd.Series(True, index=index)
+    for s in series:
+        resultado &= s.fillna(False).astype(bool)
+    return resultado
+
+
+def _de_condicoes(conds: list[Condicao]) -> pd.Series:
+    """Sinal = todas as condições cumpridas (de compra -> CALL, de venda -> PUT)."""
+    index = conds[0].call.index
+    return _sinais(_todas([c.call for c in conds], index), _todas([c.put for c in conds], index))
+
+
+def _c(texto_call: str, texto_put: str | None, call: pd.Series, put: pd.Series) -> Condicao:
+    return Condicao(texto_call, texto_put or texto_call, call, put)
+
+
+def _falso(df: pd.DataFrame) -> pd.Series:
+    return pd.Series(False, index=df.index)
 
 
 def _granularidade(df: pd.DataFrame) -> int:
@@ -43,226 +74,207 @@ def _granularidade(df: pd.DataFrame) -> int:
     return int(d.mode().iloc[0]) if len(d) else 60
 
 
-def _posicao_quadrante(df, tamanho_quadrante):
-    gran = _granularidade(df)
-    return (df["epoch"] // gran) % int(tamanho_quadrante), gran
+# --------------------------------------------------------------------------- #
+# Estratégias: condições + sinal
+# --------------------------------------------------------------------------- #
+def seguir_cor_condicoes(df):
+    c = cor(df)
+    return [_c("Vela verde (fecha acima da abertura)", "Vela vermelha (fecha abaixo da abertura)", c == 1, c == -1)]
 
 
-# --------------------------------------------------------------------------- #
-# Estratégias (sinal + preparo)
-# --------------------------------------------------------------------------- #
 def seguir_cor(df):
     """Entra na mesma cor da última vela."""
+    return _de_condicoes(seguir_cor_condicoes(df))
+
+
+def _rotulo_vela(k: int) -> str:
+    return "Vela atual" if k == 0 else "Vela anterior" if k == 1 else f"Vela de {k} atrás"
+
+
+def reversao_sequencia_condicoes(df, n=3):
     c = cor(df)
-    return _sinais(c == 1, c == -1)
-
-
-def seguir_cor_prep(df):
-    """Sempre há uma direção armada: a cor da última vela fechada."""
-    return seguir_cor(df)
+    return [_c(f"{_rotulo_vela(k)} vermelha", f"{_rotulo_vela(k)} verde", c.shift(k) == -1, c.shift(k) == 1)
+            for k in range(int(n))]
 
 
 def reversao_sequencia(df, n=3):
     """Após N velas seguidas da mesma cor, entra contra a sequência."""
-    n = int(n)
-    c = cor(df)
-    todas_verdes = (c == 1).astype(int).rolling(n).sum() == n
-    todas_vermelhas = (c == -1).astype(int).rolling(n).sum() == n
-    return _sinais(todas_vermelhas, todas_verdes)
+    return _de_condicoes(reversao_sequencia_condicoes(df, n))
 
 
-def reversao_sequencia_prep(df, n=3):
-    """Já há N-1 velas seguidas da mesma cor: mais uma completa a sequência."""
-    k = int(n) - 1
-    if k <= 0:
-        return _nada(df)
-    return reversao_sequencia(df, k)
+def cruzamento_medias_condicoes(df, rapida=5, lenta=20):
+    mr, ml = sma(df["close"], rapida), sma(df["close"], lenta)
+    validas = mr.notna() & ml.notna()
+    base = validas & validas.shift(1, fill_value=False)
+    acima, abaixo = mr > ml, mr < ml
+    return [
+        _c(f"Média {rapida} estava abaixo (ou igual) da média {lenta}",
+           f"Média {rapida} estava acima (ou igual) da média {lenta}",
+           base & ~acima.shift(1, fill_value=False), base & ~abaixo.shift(1, fill_value=False)),
+        _c(f"Média {rapida} cruza para cima da média {lenta}", f"Média {rapida} cruza para baixo da média {lenta}",
+           acima, abaixo),
+    ]
 
 
 def cruzamento_medias(df, rapida=5, lenta=20):
     """CALL quando a média rápida cruza a lenta para cima; PUT para baixo."""
-    mr, ml = sma(df["close"], rapida), sma(df["close"], lenta)
-    validas = mr.notna() & ml.notna()
-    validas_ant = validas.shift(1, fill_value=False)
-    acima = mr > ml
-    abaixo = mr < ml
-    acima_ant = acima.shift(1, fill_value=False)
-    abaixo_ant = abaixo.shift(1, fill_value=False)
-    base = validas & validas_ant
-    return _sinais(base & acima & ~acima_ant, base & abaixo & ~abaixo_ant)
+    return _de_condicoes(cruzamento_medias_condicoes(df, rapida, lenta))
 
 
-def cruzamento_medias_prep(df, rapida=5, lenta=20):
-    """Médias convergindo e a menos de 0,3 ATR uma da outra."""
-    gap = sma(df["close"], rapida) - sma(df["close"], lenta)
-    perto = (gap.abs() < gap.shift(1).abs()) & (gap.abs() <= 0.3 * atr(df))
-    return _sinais(perto & (gap < 0), perto & (gap > 0))
+def rsi_reversao_condicoes(df, periodo=14, sobrecompra=70, sobrevenda=30):
+    r = rsi(df["close"], int(periodo))
+    ant = r.shift(1)
+    return [
+        _c(f"RSI estava abaixo de {sobrevenda} (sobrevenda)", f"RSI estava acima de {sobrecompra} (sobrecompra)",
+           ant < sobrevenda, ant > sobrecompra),
+        _c(f"RSI volta para {sobrevenda} ou mais", f"RSI volta para {sobrecompra} ou menos",
+           r >= sobrevenda, r <= sobrecompra),
+    ]
 
 
 def rsi_reversao(df, periodo=14, sobrecompra=70, sobrevenda=30):
     """RSI (Wilder): CALL ao sair da sobrevenda, PUT ao sair da sobrecompra."""
-    r = rsi(df["close"], int(periodo))
-    ant = r.shift(1)
-    return _sinais((ant < sobrevenda) & (r >= sobrevenda), (ant > sobrecompra) & (r <= sobrecompra))
+    return _de_condicoes(rsi_reversao_condicoes(df, periodo, sobrecompra, sobrevenda))
 
 
-def rsi_reversao_prep(df, periodo=14, sobrecompra=70, sobrevenda=30):
-    """RSI dentro da sobrevenda (espera sair = CALL) ou da sobrecompra (PUT)."""
-    r = rsi(df["close"], int(periodo))
-    return _sinais(r < sobrevenda, r > sobrecompra)
+def mhi_condicoes(df, tamanho_quadrante=5):
+    tamanho_quadrante = int(tamanho_quadrante)
+    if len(df) < 3:
+        f = _falso(df)
+        return [_c("Pelo menos 3 velas", None, f, f)]
+    gran = _granularidade(df)
+    posicao = (df["epoch"] // gran) % tamanho_quadrante
+    c = cor(df)
+    soma3 = c.rolling(3).sum()
+    sem_doji = ~((c == 0).astype(int).rolling(3).sum() > 0)
+    continuas = (df["epoch"] - df["epoch"].shift(2)) == 2 * gran
+    fim = posicao == tamanho_quadrante - 1
+    return [
+        _c(f"Última vela do bloco de {tamanho_quadrante}", None, fim, fim),
+        _c("Nenhuma vela parada (doji) entre as 3 últimas", None, sem_doji, sem_doji),
+        _c("3 últimas velas sem buraco de horário", None, continuas, continuas),
+        # maioria vermelha -> minoria verde -> CALL
+        _c("Maioria vermelha nas 3 últimas (aposta na minoria verde)",
+           "Maioria verde nas 3 últimas (aposta na minoria vermelha)", soma3 < 0, soma3 > 0),
+    ]
 
 
 def mhi(df, tamanho_quadrante=5):
     """MHI 1 (minoria): no fim de cada quadrante de 5 velas (alinhado ao horário), olha as 3
     últimas velas e entra na cor da MINORIA na 1ª vela do próximo quadrante. Se houver doji
     entre as 3, ou se faltar vela no meio (buraco de mercado), não entra."""
-    if len(df) < 3:
-        return _nada(df)
-    tamanho_quadrante = int(tamanho_quadrante)
-    posicao, gran = _posicao_quadrante(df, tamanho_quadrante)
-    c = cor(df)
-    soma3 = c.rolling(3).sum()
-    tem_doji = (c == 0).astype(int).rolling(3).sum() > 0
-    continuas = (df["epoch"] - df["epoch"].shift(2)) == 2 * gran
-    fim_quadrante = (posicao == tamanho_quadrante - 1) & ~tem_doji & continuas
-    # maioria verde (soma > 0) -> minoria vermelha -> PUT
-    return _sinais(fim_quadrante & (soma3 < 0), fim_quadrante & (soma3 > 0))
+    return _de_condicoes(mhi_condicoes(df, tamanho_quadrante))
 
 
-def mhi_prep(df, tamanho_quadrante=5):
-    """Penúltima vela do quadrante: as 2 primeiras das 3 analisadas já têm a mesma cor,
-    então a maioria (e a direção) já está definida."""
-    if len(df) < 2:
-        return _nada(df)
-    tamanho_quadrante = int(tamanho_quadrante)
-    posicao, gran = _posicao_quadrante(df, tamanho_quadrante)
+def tendencia_recuo_condicoes(df, periodo=50):
+    ma = sma(df["close"], periodo)
+    ma_ant = ma.shift(1)
     c = cor(df)
-    continuas = (df["epoch"] - df["epoch"].shift(1)) == gran
-    armado = (posicao == tamanho_quadrante - 2) & (c == c.shift(1)) & (c != 0) & continuas
-    return _sinais(armado & (c == -1), armado & (c == 1))
+    return [
+        _c(f"Fecha acima da média de {periodo}", f"Fecha abaixo da média de {periodo}",
+           df["close"] > ma, df["close"] < ma),
+        _c("Vela anterior recuou até a média", None, df["low"].shift(1) <= ma_ant, df["high"].shift(1) >= ma_ant),
+        _c("Vela atual verde (voltou a subir)", "Vela atual vermelha (voltou a cair)", c == 1, c == -1),
+    ]
 
 
 def tendencia_recuo(df, periodo=50):
     """Tendência + recuo: CALL se fecha acima da média, a vela anterior tocou/cruzou a média
     e a atual fecha verde (voltou a subir). PUT no inverso."""
-    ma = sma(df["close"], periodo)
-    ma_ant = ma.shift(1)
-    c = cor(df)
-    call = (df["close"] > ma) & (df["low"].shift(1) <= ma_ant) & (c == 1)
-    put = (df["close"] < ma) & (df["high"].shift(1) >= ma_ant) & (c == -1)
-    return _sinais(call, put)
+    return _de_condicoes(tendencia_recuo_condicoes(df, periodo))
 
 
-def tendencia_recuo_prep(df, periodo=50):
-    """Preço do lado da tendência e recuando até a média (tocou ou a menos de 0,3 ATR)."""
-    ma = sma(df["close"], periodo)
-    folga = 0.3 * atr(df)
-    call = (df["close"] > ma) & (df["low"] <= ma + folga)
-    put = (df["close"] < ma) & (df["high"] >= ma - folga)
-    return _sinais(call, put)
+def bollinger_rsi_condicoes(df, periodo_bb=20, desvios=2.0, periodo_rsi=14, sobrecompra=70, sobrevenda=30):
+    sup, inf, _ = bandas(df["close"], periodo_bb, desvios)
+    r = rsi(df["close"], int(periodo_rsi))
+    return [
+        _c("Fecha abaixo da banda de Bollinger inferior", "Fecha acima da banda de Bollinger superior",
+           df["close"] < inf, df["close"] > sup),
+        _c(f"RSI abaixo de {sobrevenda}", f"RSI acima de {sobrecompra}", r < sobrevenda, r > sobrecompra),
+    ]
 
 
 def bollinger_rsi(df, periodo_bb=20, desvios=2.0, periodo_rsi=14, sobrecompra=70, sobrevenda=30):
     """Bollinger + RSI: CALL se fecha abaixo da banda inferior com RSI < sobrevenda;
     PUT se fecha acima da banda superior com RSI > sobrecompra."""
-    sup, inf, _ = bandas(df["close"], periodo_bb, desvios)
-    r = rsi(df["close"], int(periodo_rsi))
-    return _sinais((df["close"] < inf) & (r < sobrevenda), (df["close"] > sup) & (r > sobrecompra))
+    return _de_condicoes(bollinger_rsi_condicoes(df, periodo_bb, desvios, periodo_rsi, sobrecompra, sobrevenda))
 
 
-def bollinger_rsi_prep(df, periodo_bb=20, desvios=2.0, periodo_rsi=14, sobrecompra=70, sobrevenda=30):
-    """Fechamento colado na banda (a menos de 0,25 desvio) e RSI a até 5 pontos do extremo."""
-    sup, inf, dp = bandas(df["close"], periodo_bb, desvios)
-    r = rsi(df["close"], int(periodo_rsi))
-    call = (df["close"] < inf + 0.25 * dp) & (r < sobrevenda + 5)
-    put = (df["close"] > sup - 0.25 * dp) & (r > sobrecompra - 5)
-    return _sinais(call, put)
+def pin_bar_condicoes(df, proporcao=2.5, corpo_max=0.3, exigir_extremo=1, n=20):
+    corpo = (df["close"] - df["open"]).abs()
+    amplitude = df["high"] - df["low"]
+    pavio_sup = df["high"] - df[["open", "close"]].max(axis=1)
+    pavio_inf = df[["open", "close"]].min(axis=1) - df["low"]
+    base = (amplitude > 0) & (corpo <= corpo_max * amplitude)
+    conds = [
+        _c(f"Corpo pequeno (até {corpo_max:.0%} da vela)", None, base, base),
+        _c(f"Pavio inferior longo (≥ {proporcao}× o corpo)", f"Pavio superior longo (≥ {proporcao}× o corpo)",
+           (pavio_inf >= proporcao * corpo) & (pavio_sup * proporcao <= pavio_inf),
+           (pavio_sup >= proporcao * corpo) & (pavio_inf * proporcao <= pavio_sup)),
+    ]
+    if int(exigir_extremo):
+        conds.append(_c(f"Faz a mínima das últimas {int(n)} velas", f"Faz a máxima das últimas {int(n)} velas",
+                        df["low"] <= df["low"].rolling(int(n)).min(),
+                        df["high"] >= df["high"].rolling(int(n)).max()))
+    return conds
 
 
 def pin_bar(df, proporcao=2.5, corpo_max=0.3, exigir_extremo=1, n=20):
     """Pin Bar: pavio >= proporcao x corpo e corpo <= corpo_max do tamanho da vela.
     Pavio inferior longo = CALL, superior longo = PUT. exigir_extremo=1: a vela precisa
     fazer a mínima (CALL) / máxima (PUT) das últimas N velas."""
-    corpo = (df["close"] - df["open"]).abs()
-    amplitude = df["high"] - df["low"]
-    pavio_sup = df["high"] - df[["open", "close"]].max(axis=1)
-    pavio_inf = df[["open", "close"]].min(axis=1) - df["low"]
-    base = (amplitude > 0) & (corpo <= corpo_max * amplitude)
-    call = base & (pavio_inf >= proporcao * corpo) & (pavio_sup * proporcao <= pavio_inf)
-    put = base & (pavio_sup >= proporcao * corpo) & (pavio_inf * proporcao <= pavio_sup)
-    if int(exigir_extremo):
-        call &= df["low"] <= df["low"].rolling(int(n)).min()
-        put &= df["high"] >= df["high"].rolling(int(n)).max()
-    return _sinais(call, put)
+    return _de_condicoes(pin_bar_condicoes(df, proporcao, corpo_max, exigir_extremo, n))
 
 
-def pin_bar_prep(df, proporcao=2.5, corpo_max=0.3, exigir_extremo=1, n=20):
-    """Com exigir_extremo=1: preço testando a mínima/máxima das últimas N velas (a menos de
-    0,25 ATR), onde uma rejeição viraria pin bar. Sem extremo: pin bar "quase" formado."""
-    if not int(exigir_extremo):
-        return pin_bar(df, proporcao * 0.6, min(1.0, corpo_max * 1.5), 0, n)
-    folga = 0.25 * atr(df)
-    call = df["low"] <= df["low"].rolling(int(n)).min() + folga
-    put = df["high"] >= df["high"].rolling(int(n)).max() - folga
-    return _sinais(call, put)
+def rompimento_sr_condicoes(df, n=20):
+    resist, suporte = niveis_anteriores(df, n)
+    return [_c(f"Fecha acima da máxima das {int(n)} velas anteriores",
+               f"Fecha abaixo da mínima das {int(n)} velas anteriores",
+               df["close"] > resist, df["close"] < suporte)]
 
 
 def rompimento_sr(df, n=20):
     """Rompimento: CALL se fecha acima da máxima das N velas anteriores; PUT abaixo da mínima."""
+    return _de_condicoes(rompimento_sr_condicoes(df, n))
+
+
+def rejeicao_sr_condicoes(df, n=20):
     resist, suporte = niveis_anteriores(df, n)
-    return _sinais(df["close"] > resist, df["close"] < suporte)
-
-
-def _perto_dos_niveis(df, n):
-    """Fechamento a menos de 0,25 ATR da máxima/mínima que valerá para a PRÓXIMA vela."""
-    folga = 0.25 * atr(df)
-    resist = df["high"].rolling(int(n)).max()
-    suporte = df["low"].rolling(int(n)).min()
-    return df["close"] >= resist - folga, df["close"] <= suporte + folga
-
-
-def rompimento_sr_prep(df, n=20):
-    """Fechamento encostado na resistência (CALL) ou no suporte (PUT)."""
-    perto_topo, perto_fundo = _perto_dos_niveis(df, n)
-    return _sinais(perto_topo, perto_fundo)
+    dentro = (df["close"] < resist) & (df["close"] > suporte)
+    return [
+        _c(f"Toca a mínima das {int(n)} velas anteriores", f"Toca a máxima das {int(n)} velas anteriores",
+           df["low"] <= suporte, df["high"] >= resist),
+        _c("Fecha de volta dentro da faixa", None, dentro, dentro),
+    ]
 
 
 def rejeicao_sr(df, n=20):
     """Rejeição: tocou a máxima/mínima das N velas anteriores e fechou de volta dentro
     do intervalo -> entra contra o rompimento (topo = PUT, fundo = CALL)."""
-    resist, suporte = niveis_anteriores(df, n)
-    dentro = (df["close"] < resist) & (df["close"] > suporte)
-    return _sinais(dentro & (df["low"] <= suporte), dentro & (df["high"] >= resist))
+    return _de_condicoes(rejeicao_sr_condicoes(df, n))
 
 
-def rejeicao_sr_prep(df, n=20):
-    """Fechamento encostado na resistência (PUT se rejeitar) ou no suporte (CALL)."""
-    perto_topo, perto_fundo = _perto_dos_niveis(df, n)
-    return _sinais(perto_fundo, perto_topo)
-
-
-def engolfo(df):
-    """Engolfo: vela verde cujo corpo engole o corpo da vermelha anterior = CALL; inverso = PUT."""
+def engolfo_condicoes(df):
     c = cor(df)
     c_ant = c.shift(1)
     o, f = df["open"], df["close"]
     o_ant, f_ant = o.shift(1), f.shift(1)
     maior = (f - o).abs() > (f_ant - o_ant).abs()
-    alta = (c == 1) & (c_ant == -1) & (o <= f_ant) & (f >= o_ant) & maior
-    baixa = (c == -1) & (c_ant == 1) & (o >= f_ant) & (f <= o_ant) & maior
-    return _sinais(alta, baixa)
+    return [
+        _c("Vela anterior vermelha", "Vela anterior verde", c_ant == -1, c_ant == 1),
+        _c("Vela atual verde", "Vela atual vermelha", c == 1, c == -1),
+        _c("Corpo atual engole o corpo anterior", None,
+           (o <= f_ant) & (f >= o_ant) & maior, (o >= f_ant) & (f <= o_ant) & maior),
+    ]
 
 
-def engolfo_prep(df):
-    """Vela vermelha (verde) de corpo até 1 ATR depois de 3 velas de queda (alta):
-    uma vela contrária maior a engoliria."""
-    c = cor(df)
-    corpo_ok = (df["close"] - df["open"]).abs() <= atr(df)
-    queda = df["close"] < df["close"].shift(3)
-    alta = df["close"] > df["close"].shift(3)
-    return _sinais((c == -1) & corpo_ok & queda, (c == 1) & corpo_ok & alta)
+def engolfo(df):
+    """Engolfo: vela verde cujo corpo engole o corpo da vermelha anterior = CALL; inverso = PUT."""
+    return _de_condicoes(engolfo_condicoes(df))
 
 
+# --------------------------------------------------------------------------- #
+# Registro
 # --------------------------------------------------------------------------- #
 def _resumo_doc(f) -> str:
     """Docstring em uma linha só."""
@@ -271,11 +283,13 @@ def _resumo_doc(f) -> str:
 
 @dataclass
 class Estrategia:
+    """Estratégia registrada: função de sinal, condições nomeadas e grade de parâmetros."""
+
     nome: str
     sigla: str
     funcao: Callable
     parametros: dict = field(default_factory=dict)
-    preparo: Callable | None = None
+    condicoes: Callable | None = None
     grade: dict = field(default_factory=dict)   # valores testados na otimização walk-forward
 
     @property
@@ -289,17 +303,19 @@ class Estrategia:
     def gerar_sinais(self, df: pd.DataFrame, **params) -> pd.Series:
         return self.funcao(df, **{**self.parametros, **params})
 
-    def gerar_preparo(self, df: pd.DataFrame, **params) -> pd.Series:
-        if self.preparo is None:
-            return _nada(df)
-        return self.preparo(df, **{**self.parametros, **params})
+    def gerar_condicoes(self, df: pd.DataFrame, **params) -> list[Condicao]:
+        """Condições nomeadas. Sem `condicoes` registradas, o próprio sinal vira a condição única."""
+        if self.condicoes is not None:
+            return self.condicoes(df, **{**self.parametros, **params})
+        s = self.gerar_sinais(df, **params)
+        return [_c("Sinal da estratégia", None, s == "CALL", s == "PUT")]
 
     def combinacoes(self) -> list[dict]:
         """Todas as combinações da grade (sempre inclui os parâmetros padrão)."""
         if not self.grade:
             return [dict(self.parametros)]
         chaves = list(self.grade)
-        combos = [{**self.parametros, **dict(zip(chaves, valores))}
+        combos = [{**self.parametros, **dict(zip(chaves, valores, strict=True))}
                   for valores in product(*(self.grade[k] for k in chaves))]
         if dict(self.parametros) not in combos:
             combos.insert(0, dict(self.parametros))
@@ -307,27 +323,27 @@ class Estrategia:
 
 
 ESTRATEGIAS = [
-    Estrategia("Seguir cor", "COR", seguir_cor, preparo=seguir_cor_prep),
+    Estrategia("Seguir cor", "COR", seguir_cor, condicoes=seguir_cor_condicoes),
     Estrategia("Reversão de sequência", "REV", reversao_sequencia, {"n": 3},
-               preparo=reversao_sequencia_prep, grade={"n": [2, 3, 4, 5]}),
+               condicoes=reversao_sequencia_condicoes, grade={"n": [2, 3, 4, 5]}),
     Estrategia("Cruzamento de médias", "MM", cruzamento_medias, {"rapida": 5, "lenta": 20},
-               preparo=cruzamento_medias_prep, grade={"rapida": [3, 5, 9], "lenta": [20, 50]}),
+               condicoes=cruzamento_medias_condicoes, grade={"rapida": [3, 5, 9], "lenta": [20, 50]}),
     Estrategia("RSI reversão", "RSI", rsi_reversao, {"periodo": 14, "sobrecompra": 70, "sobrevenda": 30},
-               preparo=rsi_reversao_prep,
+               condicoes=rsi_reversao_condicoes,
                grade={"periodo": [7, 14, 21], "sobrecompra": [70, 80], "sobrevenda": [30, 20]}),
-    Estrategia("MHI 1 (minoria)", "MHI", mhi, {"tamanho_quadrante": 5}, preparo=mhi_prep),
+    Estrategia("MHI 1 (minoria)", "MHI", mhi, {"tamanho_quadrante": 5}, condicoes=mhi_condicoes),
     Estrategia("Tendência + recuo à média", "TEND", tendencia_recuo, {"periodo": 50},
-               preparo=tendencia_recuo_prep, grade={"periodo": [20, 50, 100]}),
+               condicoes=tendencia_recuo_condicoes, grade={"periodo": [20, 50, 100]}),
     Estrategia("Bollinger + RSI", "BB", bollinger_rsi,
                {"periodo_bb": 20, "desvios": 2.0, "periodo_rsi": 14, "sobrecompra": 70, "sobrevenda": 30},
-               preparo=bollinger_rsi_prep, grade={"desvios": [2.0, 2.5], "periodo_rsi": [7, 14]}),
+               condicoes=bollinger_rsi_condicoes, grade={"desvios": [2.0, 2.5], "periodo_rsi": [7, 14]}),
     Estrategia("Pin Bar", "PIN", pin_bar, {"proporcao": 2.5, "corpo_max": 0.3, "exigir_extremo": 1, "n": 20},
-               preparo=pin_bar_prep, grade={"proporcao": [2.0, 2.5, 3.0], "n": [10, 20]}),
-    Estrategia("Rompimento S/R", "ROMP", rompimento_sr, {"n": 20}, preparo=rompimento_sr_prep,
+               condicoes=pin_bar_condicoes, grade={"proporcao": [2.0, 2.5, 3.0], "n": [10, 20]}),
+    Estrategia("Rompimento S/R", "ROMP", rompimento_sr, {"n": 20}, condicoes=rompimento_sr_condicoes,
                grade={"n": [10, 20, 50]}),
-    Estrategia("Rejeição S/R", "REJ", rejeicao_sr, {"n": 20}, preparo=rejeicao_sr_prep,
+    Estrategia("Rejeição S/R", "REJ", rejeicao_sr, {"n": 20}, condicoes=rejeicao_sr_condicoes,
                grade={"n": [10, 20, 50]}),
-    Estrategia("Engolfo", "ENG", engolfo, preparo=engolfo_prep),
+    Estrategia("Engolfo", "ENG", engolfo, condicoes=engolfo_condicoes),
 ]
 POR_ID = {e.id: e for e in ESTRATEGIAS}
 

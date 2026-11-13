@@ -131,7 +131,9 @@ def test_probabilidade_usa_decimal_quando_arredondamento_esconderia_o_break_even
 # --------------------------------------------------------------------------- selos do ranking
 def test_selos():
     assert rk.selo(_linha("a", 200, 320)["janela"], None)["codigo"] == "comprovada"
-    assert rk.selo(_linha("a", 30, 50)["janela"], None)["codigo"] == "poucos"
+    assert rk.selo(_linha("a", 30, 50)["janela"], None)["codigo"] == "abaixo"
+    assert rk.selo(_linha("a", 10, 14)["janela"], None)["codigo"] == "poucos"
+    assert rk.selo(_linha("a", 10, 14)["janela"], None)["amostra_pequena"]
     assert rk.selo(_linha("a", 55, 110)["janela"], None)["codigo"] == "sem"
     assert rk.selo(_linha("a", 55, 110)["janela"], {"estado": "perdendo força"})["codigo"] == "perdendo"
     assert rk.selo(None, None)["texto"] == "Poucos dados"

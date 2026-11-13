@@ -19,11 +19,23 @@ EXPIRACAO_PADRAO = 1          # em velas
 # Preço de saída igual ao de entrada: "devolve" (stake devolvida, comum em várias corretoras)
 # ou "perde" (regra Rise/Fall padrão da Deriv: só ganha se a saída for estritamente melhor).
 EMPATE_PADRAO = os.getenv("EMPATE", "devolve")
-JANELA_RANKING = 500          # "últimas N velas" do ranking
-MIN_OPERACOES = 100           # mínimo de operações na janela para declarar vantagem
+# Janela recente do ranking. Com 500 velas só ~2 das 11 estratégias chegavam a 100 operações
+# (medido em R_100 M1 e EUR/USD M5); com 1500 a maioria chega. O histórico (N_HISTORICO) é mostrado ao lado.
+JANELA_RANKING = 1500
+MIN_OPERACOES = 100           # mínimo de operações na janela para declarar vantagem (NÃO relaxar)
+MIN_OPS_AMOSTRA = 30          # abaixo disso a estratégia vai para o grupo "Poucos dados" (amostra pequena)
 CONFIANCA = 0.95              # nível do intervalo de Wilson
 Z_FORCA = 1.645               # z unilateral (5%) para "perdendo/ganhando força"
 MIN_OPS_FORCA = 30            # mínimo de operações em cada lado para comparar força
+
+# --------------------------------------------------------------------------- estratégia líder e avisos
+LIDER_VELAS_CONFIRMACAO = 3   # a líder só troca se a nova ficar no topo por N velas fechadas seguidas...
+LIDER_MARGEM_IC = 0.02        # ...ou se o limite inferior do IC dela for pelo menos 2 p.p. maior
+PROGRESSO_LIMITE = int(os.getenv("PROGRESSO_LIMITE", "70"))   # % de formação que dispara o aviso
+PROGRESSO_LIMITE_MIN, PROGRESSO_LIMITE_MAX = 50, 100
+PROGRESSO_PESO_CONDICOES = 0.6   # peso das condições cumpridas; o resto é a proximidade do gatilho
+PROGRESSO_DIST_MAX_ATR = 1.0     # a 1 ATR (ou mais) do gatilho a proximidade vale 0
+PROGRESSO_PASSO_ATR = 0.05       # resolução da busca da distância até o gatilho
 
 # --------------------------------------------------------------------------- modo ao vivo
 N_HISTORICO = 3000            # velas do timeframe carregadas por ativo ("histórico completo" ao vivo)

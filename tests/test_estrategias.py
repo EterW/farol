@@ -14,12 +14,34 @@ def _igual(a: pd.Series, b: pd.Series) -> bool:
 
 
 @pytest.mark.parametrize("est", ESTS, ids=IDS)
-def test_formato_sinais_e_preparo(est, aleatorio):
-    for f in (est.gerar_sinais, est.gerar_preparo):
-        s = f(aleatorio)
-        assert isinstance(s, pd.Series)
-        assert s.index.equals(aleatorio.index)
-        assert set(s.dropna().unique()) <= {"CALL", "PUT"}
+def test_formato_sinais_e_condicoes(est, aleatorio):
+    s = est.gerar_sinais(aleatorio)
+    assert isinstance(s, pd.Series) and s.index.equals(aleatorio.index)
+    assert set(s.dropna().unique()) <= {"CALL", "PUT"}
+    conds = est.gerar_condicoes(aleatorio)
+    assert conds and all(c.texto_call and c.texto_put for c in conds)
+    assert all(c.call.index.equals(aleatorio.index) and c.put.index.equals(aleatorio.index) for c in conds)
+
+
+@pytest.mark.parametrize("est", ESTS, ids=IDS)
+def test_sinal_eh_exatamente_todas_as_condicoes(est):
+    """O progresso conta as condições; elas precisam ser EXATAMENTE as que geram o sinal."""
+    df = df_aleatorio(2000, seed=13)
+    for params in est.combinacoes()[:4]:
+        s = est.gerar_sinais(df, **params)
+        conds = est.gerar_condicoes(df, **params)
+        call = pd.concat([c.call.fillna(False).astype(bool) for c in conds], axis=1).all(axis=1)
+        put = pd.concat([c.put.fillna(False).astype(bool) for c in conds], axis=1).all(axis=1)
+        assert ((s == "CALL") == (call & ~put)).all() and ((s == "PUT") == (put & ~call)).all()
+
+
+def test_estrategia_sem_condicoes_usa_o_sinal():
+    def so_verde(df):
+        return E._sinais(df["close"] > df["open"], df["close"] < df["open"])
+    est = E.Estrategia("Só verde", "SV", so_verde)
+    df = df_aleatorio(100, seed=2)
+    (c,) = est.gerar_condicoes(df)
+    assert (c.call == (est.gerar_sinais(df) == "CALL")).all()
 
 
 @pytest.mark.parametrize("est", ESTS, ids=IDS)
@@ -34,11 +56,13 @@ def test_sem_lookahead(est):
     df = df_aleatorio(1200, seed=7)
     for params in est.combinacoes()[:4]:
         cheio_s = est.gerar_sinais(df, **params)
-        cheio_p = est.gerar_preparo(df, **params)
+        cheio_c = est.gerar_condicoes(df, **params)
         for k in (60, 201, 555, 999):
             parte = df.iloc[:k]
             assert _igual(est.gerar_sinais(parte, **params), cheio_s.iloc[:k]), f"sinal olha o futuro (k={k}, {params})"
-            assert _igual(est.gerar_preparo(parte, **params), cheio_p.iloc[:k]), f"preparo olha o futuro (k={k})"
+            for a, b in zip(est.gerar_condicoes(parte, **params), cheio_c, strict=True):
+                assert a.call.fillna(False).tolist() == b.call.iloc[:k].fillna(False).tolist(), "condição olha o futuro"
+                assert a.put.fillna(False).tolist() == b.put.iloc[:k].fillna(False).tolist(), "condição olha o futuro"
 
 
 def _lista(s):
@@ -70,8 +94,9 @@ def test_reversao_sequencia():
     s = E.reversao_sequencia(df, n=3)
     assert s[2] == "PUT" and s[5] == "CALL"
     assert s.drop([2, 5]).isna().all()
-    prep = E.reversao_sequencia_prep(df, n=3)
-    assert prep[1] == "PUT" and prep[4] == "CALL"
+    conds = E.reversao_sequencia_condicoes(df, n=3)
+    assert [bool(c.put.iat[1]) for c in conds] == [True, True, False]   # 2 de 3 verdes: falta uma
+    assert [c.texto_put for c in conds] == ["Vela atual verde", "Vela anterior verde", "Vela de 2 atrás verde"]
 
 
 def test_cruzamento_nao_dispara_quando_medias_ficam_iguais():

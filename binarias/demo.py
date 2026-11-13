@@ -1,19 +1,21 @@
 ﻿"""Cenários SIMULADOS para ver e testar a tela sem a Deriv (http://127.0.0.1:8000/?demo=entrar).
 
 As velas e as estatísticas são inventadas (a página mostra a faixa "DEMONSTRAÇÃO · dados simulados"),
-mas passam pelas MESMAS funções do ao vivo: sinal.decidir, veredito.montar, mercado.analisar e
-scanner.pontuar. Assim os textos e as regras de honestidade da tela são os de verdade.
+mas passam pelas MESMAS funções do ao vivo: sinal.decidir, veredito.montar, avisos (líder e textos),
+progresso.montar, mercado.analisar e scanner.pontuar. Assim os textos e as regras de honestidade da
+tela são os de verdade.
 """
 import time
 
 import numpy as np
 import pandas as pd
 
-from . import mercado, scanner, sinal, veredito
-from .config import JANELA_RANKING, MIN_OPERACOES, PAYOUT_PADRAO
+from . import mercado, progresso, scanner, sinal, veredito
+from .avisos import MotorAvisos, SeletorLider, nome_ativo
+from .config import JANELA_RANKING, MIN_OPERACOES, MIN_OPS_AMOSTRA, PAYOUT_PADRAO, PROGRESSO_LIMITE
 from .estatistica import break_even, wilson
-from .estrategias import ESTRATEGIAS
-from .ranking import selo
+from .estrategias import ESTRATEGIAS, POR_ID
+from .ranking import chave_ordem, selo
 
 ID = {e.sigla: e.id for e in ESTRATEGIAS}   # sigla -> id (o id é o nome da função)
 CENARIOS = ("entrar", "preparando", "aguardar", "conflito", "observacao")
@@ -40,7 +42,7 @@ def _linha(est, wins: int, n: int, forca: str = "estável") -> dict:
     f = {"estado": forca, "z": None}
     return {"id": est.id, "nome": est.nome, "sigla": est.sigla, "erro": None, "janela": jan,
             "historico": {**jan, "operacoes": n * 5, "decididas": n * 5}, "forca": f,
-            "sinal": None, "preparo": None, "selo": selo(jan, f)}
+            "sinal": None, "selo": selo(jan, f)}
 
 
 def _ranking(comprovada: bool) -> dict:
@@ -52,11 +54,14 @@ def _ranking(comprovada: bool) -> dict:
     }
     forca = {"MHI": "perdendo força"}
     linhas = [_linha(e, *numeros.get(e.sigla, (40, 90)), forca.get(e.sigla, "estável")) for e in ESTRATEGIAS]
-    linhas.sort(key=lambda l: (0 if l["janela"]["vantagem"] else 1, -(l["janela"]["ic_inf"] or 0)))
+    linhas.sort(key=chave_ordem)
     be = break_even(PAYOUT_PADRAO)
-    melhor = next((l["id"] for l in linhas if l["janela"]["vantagem"]), None)
+    melhor = next((x["id"] for x in linhas if x["janela"]["vantagem"]), None)
     return {"linhas": linhas, "melhor": melhor, "janela": JANELA_RANKING, "velas": 3000, "break_even": be,
             "payout": PAYOUT_PADRAO, "expiracao": 1, "min_ops": MIN_OPERACOES, "confianca": 0.95,
+            "min_ops_amostra": MIN_OPS_AMOSTRA,
+            "ordem": ("Ordem: vantagem comprovada primeiro; depois pelo pior caso plausível (limite inferior da "
+                      "margem de erro), nunca pelo percentual bruto; empate: mais operações primeiro."),
             "criterio": f"(demonstração) mesma regra do ao vivo: ≥ {MIN_OPERACOES} operações e limite inferior "
                         f"do IC 95% acima do break-even de {be:.2%}."}
 
@@ -78,30 +83,58 @@ def mensagens(cenario: str, agora: float | None = None) -> list[dict]:
 
     comprovada = cenario in ("entrar", "preparando", "conflito")
     rk = _ranking(comprovada)
-    sinais, preparo = {}, {}
+    seletor = SeletorLider()
+    seletor.atualizar(rk, None)
+    rk = {**rk, "lider": seletor.atual, "lider_info": {"desafiante": None, "contagem": 0, "confirmacao": 3,
+                                                       "margem_ic": seletor.margem_ic}}
+    ativas = {e.id for e in ESTRATEGIAS}
+    sinais: dict = {}
     if cenario == "entrar":
         sinais = {"TEND": "CALL", "ROMP": "CALL", "COR": "PUT"}   # COR discorda, mas está abaixo do break-even
-    elif cenario == "preparando":
-        preparo = {"TEND": "CALL", "ROMP": "CALL"}
     elif cenario == "conflito":
         sinais = {"TEND": "CALL", "ROMP": "PUT"}                     # ROMP: ≥ 30 ops e acerto acima do break-even
-    elif cenario == "observacao":
-        preparo = {"TEND": "PUT"}
     sinais = {ID[k]: v for k, v in sinais.items()}
-    preparo = {ID[k]: v for k, v in preparo.items()}
-    ativas = {e.id for e in ESTRATEGIAS}
-    dec = sinal.decidir(rk, sinais, preparo, ativas, previa=False)
+
+    # progresso de formação (condições simuladas, fórmula e textos reais)
+    def prog(sigla, lado, oks, dist):
+        est = POR_ID[ID[sigla]]
+        conds = est.gerar_condicoes(fechadas)
+        textos = [c.texto_call if lado == "CALL" else c.texto_put for c in conds]
+        return progresso.montar(est, lado, oks, dist, textos)
+
+    p_lider = None
+    if cenario == "preparando":
+        p_lider = prog("TEND", "CALL", [True, True, False], 0.12)
+    elif cenario in ("entrar", "conflito"):
+        p_lider = prog("TEND", "CALL", [True, False, False], None)
+    elif cenario == "observacao":
+        cand = veredito.candidata(rk, ativas)
+        p_lider = prog(cand["sigla"], "PUT", [True] * (len(POR_ID[cand["id"]].gerar_condicoes(fechadas)) - 1)
+                       + [False], 0.2)
+    parciais = {"BB": ("PUT", 1, 2), "ENG": ("CALL", 2, 3), "REV": ("PUT", 2, 3)}
     estados_lista = []
     for e in ESTRATEGIAS:
+        st = {"id": e.id, "estado": "AGUARDANDO", "dir": None, "cumpridas": 0, "total": 1, "pct": None,
+              "lider": e.id == seletor.atual, "em_operacao": False}
         if sinais.get(e.id):
-            st = {"id": e.id, "estado": "SINAL", "dir": sinais[e.id], "em_operacao": True}
-        elif preparo.get(e.id):
-            st = {"id": e.id, "estado": "SE PREPARANDO", "dir": preparo[e.id], "em_operacao": False}
-        else:
-            st = {"id": e.id, "estado": "AGUARDANDO", "dir": None, "em_operacao": False}
+            st.update(estado="SINAL", dir=sinais[e.id], em_operacao=True)
+        elif p_lider and p_lider["id"] == e.id:
+            st.update(estado="FORMANDO" if p_lider["pct"] >= PROGRESSO_LIMITE else "PARCIAL", dir=p_lider["dir"],
+                      cumpridas=p_lider["cumpridas"], total=p_lider["total"], pct=p_lider["pct"])
+        elif e.sigla in parciais:
+            lado, k, n = parciais[e.sigla]
+            st.update(estado="PARCIAL", dir=lado, cumpridas=k, total=n)
         estados_lista.append(st)
     estados = {s["id"]: s for s in estados_lista}
-    ver = veredito.montar(dec, rk, analise.get("humano"), cenario == "observacao", estados, ativas)
+    formando_lider = ({seletor.atual: p_lider["dir"]} if seletor.atual and p_lider
+                      and p_lider["id"] == seletor.atual and p_lider["pct"] >= PROGRESSO_LIMITE else {})
+    dec = sinal.decidir(rk, sinais, formando_lider, ativas, previa=False, lider=seletor.atual)
+    ver = veredito.montar(dec, rk, analise.get("humano"), cenario == "observacao", estados, ativas, p_lider)
+
+    motor = MotorAvisos(avisar_obs=True)
+    vela = int(formando["epoch"].iat[0])
+    lista_avisos = (motor.fechamento(ver, vela, nome_ativo("frxEURUSD")) if cenario in ("entrar", "conflito")
+                    else motor.formacao(ver, p_lider, vela, nome_ativo("frxEURUSD")))
 
     # histórico de setas: algumas da líder e de outras estratégias
     rng = np.random.default_rng(3)
@@ -153,7 +186,8 @@ def mensagens(cenario: str, agora: float | None = None) -> list[dict]:
         *ops,
         {"tipo": "decisao", **dec, "novo": False, "t": int(fechadas["epoch"].iat[-1]), "veredito": ver},
         {"tipo": "estado", "estrategias": estados_lista, "principal": dec, "veredito": ver,
-         "fecha_em": fecha_em, "agora": agora},
+         "limite": PROGRESSO_LIMITE, "lider": seletor.atual, "fecha_em": fecha_em, "agora": agora},
+        *({"tipo": "aviso", **a} for a in lista_avisos),
         {"tipo": "top3", "itens": itens, "todos": itens, "regra": scanner.REGRA, "timeframe": "M5",
          "atualizado": agora, "carregando": 0},
     ]

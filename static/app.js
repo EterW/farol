@@ -28,7 +28,6 @@ const DEMO = params.get("demo");
 let CONFIG = null, ATIVOS = [], NOMES = {}, ws = null, conectado = false;
 let ativas = new Set(), simboloAtual = null, tfAtual = "", casas = 5;
 let fechaEm = null, offsetRelogio = 0, segVela = 60, janelaEntrada = 15;
-let primeiroEstado = true, ultimoEstadoV = null, alertouPrep = null;
 let estadosEst = {}, RANKING = null, VEREDITO = null, ultimaAnalise = null;
 let somLigado = store.get("som", true), volume = store.get("volume", 70);
 let modoObs = store.get("observacao", false), mostrarTodos = store.get("todosSinais", false);
@@ -236,27 +235,21 @@ function vereditoLocal(estado) {
   return { estado: "CARREGANDO", titulo: "Analisando o histórico…",
     frase: "Carregando as velas e calculando todas as estratégias. Leva alguns segundos." };
 }
-function aplicarVeredito(v, origem, novo) {
+function aplicarVeredito(v) {
   if (!v) return;
   VEREDITO = v;
   mostrarVeredito(v);
-  const ativo = nomeAtivo(simboloAtual);
-  if (origem === "decisao" && novo) {
-    if (v.estado === "ENTRAR") {
-      somEntrada(v.dir);
-      aviso(`ENTRAR AGORA · ${ACAO[v.dir]}`, `${v.nome} — ${ativo}`, v.dir, ICONE_DIR[v.dir]);
-      notificar(`ENTRAR AGORA: ${ACAO[v.dir]} ${v.dir === "CALL" ? "▲" : "▼"}`, `${v.nome} — ${ativo}. ${v.prob ? v.prob.texto : ""}`);
-    } else if (v.estado === "CONFLITO") {
-      aviso("CONFLITO, não entrar", v.frase, "conf", "i-alerta");
-    }
-  }
-  if (origem === "estado" && !primeiroEstado && v.estado === "PREPARANDO" && ultimoEstadoV !== "PREPARANDO" && alertouPrep !== fechaEm) {
-    alertouPrep = fechaEm;   // no máximo um aviso de preparo por vela
-    somPreparo();
-    aviso(`Se preparando · ${ACAO[v.dir]}`, `${v.nome} — ${ativo}. Ainda não entre.`, "prep", "i-ampulheta");
-    notificar(`Se preparando: ${ACAO[v.dir]}`, `${v.nome} — ${ativo}`);
-  }
-  ultimoEstadoV = v.estado;
+}
+// Avisos decididos no servidor (binarias/avisos.py): aqui só tocamos o som e mostramos o texto.
+const SONS = { formando: () => somPreparo(), entrada_call: () => somEntrada("CALL"), entrada_put: () => somEntrada("PUT"),
+               resultado: () => somPreparo(), observacao: () => somPreparo() };
+const ESTILO_AVISO = { formando: ["prep", "i-ampulheta"], entrada: [null, null], resultado: ["", "i-check"],
+                       conflito: ["conf", "i-alerta"], lider: ["", "i-sino"], observacao: ["prep", "i-olho"] };
+function mostrarAviso(a, forcar = false) {
+  const [tipo, icone] = ESTILO_AVISO[a.categoria] || ["", "i-sino"];
+  aviso(a.titulo, a.texto, tipo === null ? a.dir : tipo, icone || ICONE_DIR[a.dir] || "i-sino");
+  if (a.som && SONS[a.som] && (somLigado || forcar)) SONS[a.som]();
+  if (a.notificar) notificar(a.titulo, a.texto, forcar);
 }
 
 // ================================================================== relógio (anel + linha no gráfico)
@@ -297,7 +290,8 @@ const linhasRk = {};
 function porId(id) { return (CONFIG && CONFIG.estrategias.find((e) => e.id === id)) || { simples: "", descricao: "" }; }
 function textoAgora(s) {
   if (!s || !s.dir) return "";
-  return s.estado === "SINAL" ? ` · sinal agora: ${ACAO[s.dir]}` : ` · se preparando: ${ACAO[s.dir]}`;
+  if (s.estado === "SINAL") return ` · sinal agora: ${ACAO[s.dir]}`;
+  return ` · ${s.cumpridas} de ${s.total} condições (${ACAO[s.dir]})`;
 }
 function aplicarRanking(r) {
   RANKING = r;
@@ -387,8 +381,7 @@ function aplicarEstado(msg) {
   offsetRelogio = msg.agora - Date.now() / 1000;
   estadosEst = Object.fromEntries(msg.estrategias.map((s) => [s.id, s]));
   for (const item of Object.values(linhasRk)) if (item.l) atualizarInfoRk(item);
-  aplicarVeredito(msg.veredito, "estado");
-  primeiroEstado = false;
+  aplicarVeredito(msg.veredito);
 }
 
 // ================================================================== mercado
@@ -586,7 +579,6 @@ function tratar(msg) {
       setTxt($("chipAtivo"), `${nomeAtivo(msg.simbolo)} · ${msg.timeframe}`);
       const ult = msg.velas[msg.velas.length - 1];
       if (ult) setTxt($("lgPreco"), ult[4].toFixed(casas));
-      primeiroEstado = true; ultimoEstadoV = null;
       marcarTopAtual();
       break;
     }
@@ -598,7 +590,8 @@ function tratar(msg) {
     case "estado": aplicarEstado(msg); break;
     case "ranking": aplicarRanking(msg); break;
     case "analise": aplicarAnalise(msg); break;
-    case "decisao": aplicarVeredito(msg.veredito, "decisao", msg.novo); break;
+    case "decisao": aplicarVeredito(msg.veredito); break;
+    case "aviso": mostrarAviso(msg); break;
     case "top3": aplicarTop(msg); break;
     case "sinal":
       sinaisMarcados.push({ t: msg.t, id: msg.id, dir: msg.dir, principal: msg.principal });
@@ -625,7 +618,7 @@ async function conectar() {
   const exp = Math.max(1, parseInt($("inpExp").value) || 1), payout = Math.min(500, Math.max(1, parseFloat($("inpPayout").value) || 85));
   store.set("escolha", { mercado: $("selMercado").value, simbolo, tf: $("selTf").value, custom: $("inpTfCustom").value, exp, payout });
   conectado = true; botaoConectar(true);
-  ultimoEstadoV = null; alertouPrep = null; VEREDITO = null;
+  VEREDITO = null;
   setTxt($("chipAtivo"), `${nomeAtivo(simbolo)} · ${tf}`);
   if (simbolo !== simboloAtual) { simboloAtual = simbolo; tfAtual = tf; }
   mostrarVeredito(vereditoLocal("CARREGANDO"));
