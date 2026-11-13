@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
+from conftest import df_de_ohlc
 
 from binarias import backtest as bt
-from conftest import df_de_ohlc
 
 
 def _df(pares):
@@ -17,11 +17,17 @@ def _sinais(df, mapa):
     return s
 
 
-@pytest.mark.parametrize("direcao,entrada,saida,empate,esperado", [
-    ("CALL", 100, 101, "devolve", "WIN"), ("CALL", 100, 99, "devolve", "LOSS"),
-    ("PUT", 100, 99, "devolve", "WIN"), ("PUT", 100, 101, "devolve", "LOSS"),
-    ("CALL", 100, 100, "devolve", "EMPATE"), ("PUT", 100, 100, "perde", "LOSS"),
-])
+@pytest.mark.parametrize(
+    "direcao,entrada,saida,empate,esperado",
+    [
+        ("CALL", 100, 101, "devolve", "WIN"),
+        ("CALL", 100, 99, "devolve", "LOSS"),
+        ("PUT", 100, 99, "devolve", "WIN"),
+        ("PUT", 100, 101, "devolve", "LOSS"),
+        ("CALL", 100, 100, "devolve", "EMPATE"),
+        ("PUT", 100, 100, "perde", "LOSS"),
+    ],
+)
 def test_resolver(direcao, entrada, saida, empate, esperado):
     assert bt.resolver(direcao, entrada, saida, empate) == esperado
 
@@ -65,7 +71,9 @@ def test_operacao_incompleta_descartada():
 
 def test_gale():
     df = _df([(0, 0), (100, 99), (99, 100)])  # perde na 1ª, ganha no gale
-    r = bt.executar(df, _sinais(df, {0: "CALL"}), bt.ConfigBacktest(gales=1, fator_gale=2, valor_entrada=10, payout=0.85))
+    r = bt.executar(
+        df, _sinais(df, {0: "CALL"}), bt.ConfigBacktest(gales=1, fator_gale=2, valor_entrada=10, payout=0.85)
+    )
     op = r.operacoes.iloc[0]
     assert op.gale == 1 and op.resultado == "WIN" and op.lucro == pytest.approx(-10 + 20 * 0.85)
     assert r.resumo["wins_gale_1"] == 1 and "acerto_break_even_%" not in r.resumo

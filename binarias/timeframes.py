@@ -1,5 +1,6 @@
 """Timeframes: parsing e agregação de velas. Usado igualmente pelo download (backtest)
 e pelo modo ao vivo, para que os dois montem as velas exatamente do mesmo jeito."""
+
 import pandas as pd
 
 # Granularidades (em segundos) aceitas nativamente pela Deriv em ticks_history
@@ -25,8 +26,18 @@ def nome_timeframe(segundos: int) -> str:
     return f"M{segundos // 60}"
 
 
-def normalizar(tf: str) -> str:
-    return nome_timeframe(parse_timeframe(tf))
+def granularidade_inferida(df: pd.DataFrame) -> int | None:
+    """Espaçamento mais comum entre velas (em segundos); None se não houver ao menos 2 velas."""
+    d = df["epoch"].diff()
+    d = d[d > 0]
+    return int(d.mode().iloc[0]) if len(d) else None
+
+
+def linhas_ohlc(df: pd.DataFrame) -> list[list]:
+    """Velas no formato enviado ao navegador: [epoch, open, high, low, close]."""
+    return [
+        [int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4])] for r in df[COLUNAS].itertuples(index=False)
+    ]
 
 
 def granularidade_base(segundos: int) -> int:
@@ -39,11 +50,13 @@ def granularidade_base(segundos: int) -> int:
 
 
 def vazio() -> pd.DataFrame:
+    """DataFrame de velas vazio, com as colunas e tipos certos."""
     return pd.DataFrame({c: pd.Series(dtype="int64" if c == "epoch" else float) for c in COLUNAS})
 
 
-def agregar(base: pd.DataFrame, segundos: int, gran_base: int, agora: float | None = None
-            ) -> tuple[pd.DataFrame, pd.DataFrame]:
+def agregar(
+    base: pd.DataFrame, segundos: int, gran_base: int, agora: float | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Agrupa velas da granularidade `gran_base` em velas de `segundos`, alinhadas ao epoch (UTC),
     como a Deriv faz. Devolve (fechadas, formando) — `formando` tem 0 ou 1 linha.
 
@@ -58,9 +71,9 @@ def agregar(base: pd.DataFrame, segundos: int, gran_base: int, agora: float | No
     fator = max(1, segundos // gran_base)
     d = base[COLUNAS].sort_values("epoch").drop_duplicates("epoch", keep="last")
     grupo = d["epoch"].astype("int64") - d["epoch"].astype("int64") % segundos
-    agg = d.groupby(grupo, sort=True).agg(open=("open", "first"), high=("high", "max"),
-                                          low=("low", "min"), close=("close", "last"),
-                                          n=("open", "size"))
+    agg = d.groupby(grupo, sort=True).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"), n=("open", "size")
+    )
     agg.index.name = "epoch"
     agg = agg.reset_index()
     if fator > 1 and len(agg) and agg["n"].iat[0] < fator:

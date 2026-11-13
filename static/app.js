@@ -186,6 +186,7 @@ const SONS = {   // um som por tipo de aviso (os nomes vêm do servidor)
 };
 function tocar(nome, forcar = false) {
   if ((!P.som && !forcar) || !SONS[nome]) return;
+  if (!A.ctx && !forcar) return;   // sem nenhum clique na página o navegador não deixa tocar (liberado no 1º clique)
   try { SONS[nome](); }
   catch (e) {
     if (!A.avisouFalha) { A.avisouFalha = true; toast("Som indisponível", "O navegador não deixou tocar o aviso sonoro.", "erro", "i-alerta"); }
@@ -318,6 +319,7 @@ function textoOutras() {
     if (s.id === alvo || !s.dir || !S.ativas.has(s.id)) continue;
     const e = porId(s.id);
     if (s.estado === "SINAL") partes.push(`${e.nome}: sinal agora ${ACAO[s.dir]}`);
+    else if (s.estado === "PARCIAL" && s.cumpridas === s.total) partes.push(`${e.nome}: ${ACAO[s.dir]} se a vela fechasse agora`);
     else if (s.estado === "PARCIAL" && s.cumpridas) partes.push(`${e.nome} ${s.cumpridas}/${s.total} ${ACAO[s.dir]}`);
   }
   return partes.length ? `Outras estratégias (sem aviso): ${partes.join(" · ")}` : "";
@@ -432,6 +434,7 @@ function textoAgora(s) {
   if (!s || !s.dir) return "";
   if (s.estado === "SINAL") return `sinal agora: ${ACAO[s.dir]} ${SETA[s.dir]}`;
   if (s.estado === "FORMANDO") return `se formando: ${ACAO[s.dir]} ${SETA[s.dir]} (${s.pct}%)`;
+  if (s.cumpridas && s.cumpridas === s.total) return `${ACAO[s.dir]} se a vela fechasse agora`;
   if (s.cumpridas) return `${s.cumpridas} de ${s.total} condições · ${ACAO[s.dir]}`;
   return "";
 }
@@ -826,7 +829,6 @@ function botaoConectar(ligado) {
 async function conectar() {
   const simbolo = $("selAtivo").value, tf = timeframeEscolhido();
   if (!simbolo || !tf) { $("dlgAtivo").showModal(); return; }
-  try { audio(); } catch { /* sem áudio: os avisos continuam visuais */ }
   const exp = Math.min(60, Math.max(1, parseInt($("inpExp").value, 10) || 1));
   const payout = Math.min(500, Math.max(1, parseFloat($("inpPayout").value) || 85));
   store.set("escolha", { mercado: $("selMercado").value, simbolo, tf: $("selTf").value, custom: $("inpTfCustom").value, exp, payout });
@@ -1048,6 +1050,10 @@ async function init() {
     posicionarLinhaEntrada(); atualizarBarraCompacta();
   });
   setInterval(atualizarRelogio, 250);
+  // o navegador só libera o som depois de um gesto do usuário: prepara o áudio no primeiro clique/tecla
+  const liberarAudio = () => { try { audio(); } catch { /* sem áudio: os avisos continuam visuais */ } };
+  addEventListener("pointerdown", liberarAudio, { once: true });
+  addEventListener("keydown", liberarAudio, { once: true });
   S.config = await (await fetch("/api/config")).json();
   const cfg = S.config;
   const salvas = store.get("ativas", null);

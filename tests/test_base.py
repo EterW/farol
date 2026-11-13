@@ -1,14 +1,17 @@
 """Testes de timeframes, CSV e estatística."""
+
 import pandas as pd
 import pytest
-
-from binarias import dados, estatistica as st, timeframes as tf
 from conftest import INICIO, df_aleatorio
+
+from binarias import dados
+from binarias import estatistica as st
+from binarias import timeframes as tf
 
 
 def test_parse_e_nome_timeframe():
     assert tf.parse_timeframe("m20") == 1200 and tf.parse_timeframe("H4") == 14400
-    assert tf.nome_timeframe(3600) == "H1" and tf.normalizar("M60") == "H1"
+    assert tf.nome_timeframe(3600) == "H1" and tf.nome_timeframe(tf.parse_timeframe("M60")) == "H1"
     for ruim in ("", "X5", "M0", "M-1", "5M"):
         with pytest.raises(ValueError):
             tf.parse_timeframe(ruim)

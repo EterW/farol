@@ -1,27 +1,36 @@
 """Menu de terminal: baixar velas da Deriv e rodar backtests."""
+
 import os
 import sys
 from collections import defaultdict
 
-from binarias import backtest as bt, dados, ranking as rk
+import websockets
+
+from binarias import backtest as bt
+from binarias import dados
+from binarias import ranking as rk
 from binarias.config import JANELA_RANKING, MIN_OPERACOES, PASTA_RESULTADOS, TIMEFRAMES_PRONTOS
+from binarias.deriv import DerivErro
 from binarias.estrategias import ESTRATEGIAS
 from binarias.log import configurar_log, obter
 from binarias.timeframes import GRANULARIDADES_DERIV, nome_timeframe, parse_timeframe
 
 log = obter("menu")
+ERROS_DERIV = (DerivErro, OSError, ValueError, websockets.WebSocketException)  # rede, Deriv ou dado inválido
 
 
 # --------------------------------------------------------------------------- #
 # Helpers de entrada
 # --------------------------------------------------------------------------- #
 def perguntar(msg: str, padrao=None) -> str:
+    """Lê uma resposta do terminal (Enter = padrão)."""
     sufixo = f" [{padrao}]" if padrao is not None else ""
     resp = input(f"{msg}{sufixo}: ").replace("﻿", "").strip()
     return resp if resp else ("" if padrao is None else str(padrao))
 
 
 def perguntar_numero(msg: str, padrao, tipo=int, minimo=None, maximo=None):
+    """Lê um número dentro da faixa, repetindo até ser válido."""
     while True:
         try:
             valor = tipo(perguntar(msg, padrao).replace(",", "."))
@@ -37,13 +46,13 @@ def perguntar_numero(msg: str, padrao, tipo=int, minimo=None, maximo=None):
 
 
 def escolher_da_lista(titulo: str, itens: list[str], permitir_voltar=True) -> int | None:
+    """Menu numerado; devolve o índice escolhido (None = voltar)."""
     print(f"\n{titulo}")
     for i, item in enumerate(itens, 1):
         print(f"  {i:>3}) {item}")
     if permitir_voltar:
         print("    0) Voltar")
-    idx = perguntar_numero("Escolha", None if permitir_voltar else 1, int,
-                           0 if permitir_voltar else 1, len(itens))
+    idx = perguntar_numero("Escolha", None if permitir_voltar else 1, int, 0 if permitir_voltar else 1, len(itens))
     return None if idx == 0 else idx - 1
 
 
@@ -51,10 +60,11 @@ def escolher_da_lista(titulo: str, itens: list[str], permitir_voltar=True) -> in
 # Escolha de ativo e timeframe
 # --------------------------------------------------------------------------- #
 def escolher_ativo() -> str | None:
+    """Escolha do ativo por mercado, busca ou código."""
     print("\nBuscando ativos na Deriv...")
     try:
         ativos = dados.listar_ativos()
-    except Exception as e:
+    except ERROS_DERIV as e:
         log.warning("Erro ao buscar ativos: %s", e)
         return perguntar("Digite o código do ativo manualmente (ex: R_100, frxEURUSD)") or None
 
@@ -91,6 +101,7 @@ def escolher_ativo() -> str | None:
 
 
 def escolher_timeframe() -> str | None:
+    """Escolha do tempo gráfico (pronto ou personalizado)."""
     opcoes = []
     for tf in TIMEFRAMES_PRONTOS:
         nativo = "" if parse_timeframe(tf) in GRANULARIDADES_DERIV else "  (agregado)"
@@ -113,6 +124,7 @@ def escolher_timeframe() -> str | None:
 # Fluxos do menu
 # --------------------------------------------------------------------------- #
 def fluxo_baixar():
+    """Baixa velas e oferece rodar o backtest."""
     simbolo = escolher_ativo()
     if not simbolo:
         return
@@ -123,7 +135,7 @@ def fluxo_baixar():
     print(f"\nBaixando {qtd} velas de {simbolo} em {tf}...")
     try:
         df = dados.baixar_velas(simbolo, tf, qtd)
-    except Exception as e:
+    except ERROS_DERIV as e:
         log.error("Falha ao baixar %s %s: %s", simbolo, tf, e)
         print(f"Erro: {e}")
         return
@@ -137,6 +149,7 @@ def fluxo_baixar():
 
 
 def configurar_backtest(com_gale: bool = True) -> bt.ConfigBacktest:
+    """Pergunta os parâmetros do backtest."""
     print("\nConfiguração do backtest (Enter mantém o padrão):")
     p = bt.ConfigBacktest()
     gales = perguntar_numero("Quantidade de martingales (0 = sem gale)", p.gales, int, 0, 10) if com_gale else 0
@@ -147,12 +160,14 @@ def configurar_backtest(com_gale: bool = True) -> bt.ConfigBacktest:
         gales=gales,
         fator_gale=perguntar_numero("Multiplicador do gale", p.fator_gale, float, 1) if gales else p.fator_gale,
         banca_inicial=perguntar_numero("Banca inicial", p.banca_inicial, float, 0),
-        empate="perde" if perguntar("Preço igual na expiração: (d)evolve ou (p)erde?", "d").lower().startswith("p")
+        empate="perde"
+        if perguntar("Preço igual na expiração: (d)evolve ou (p)erde?", "d").lower().startswith("p")
         else "devolve",
     )
 
 
 def escolher_csv() -> str | None:
+    """Escolha de um CSV salvo em data/."""
     csvs = dados.listar_csvs()
     if not csvs:
         print("\nNenhum CSV em data/. Baixe dados primeiro.")
@@ -162,6 +177,7 @@ def escolher_csv() -> str | None:
 
 
 def fluxo_backtest(arquivo: str | None = None):
+    """Backtest de uma estratégia (ou comparativo de todas)."""
     arquivo = arquivo or escolher_csv()
     if not arquivo:
         return
@@ -184,8 +200,10 @@ def fluxo_backtest(arquivo: str | None = None):
                 log.exception("Estratégia %s falhou em %s", est.id, arquivo)
         tabela = bt.comparar(resultados)
         print("\n" + tabela.to_string())
-        print("\nAtenção: escolher a 'melhor' desta tabela e usar daqui pra frente é otimizar no passado.\n"
-              "Use a validação walk-forward (python validar.py) antes de confiar em qualquer uma.")
+        print(
+            "\nAtenção: escolher a 'melhor' desta tabela e usar daqui pra frente é otimizar no passado.\n"
+            "Use a validação walk-forward (python validar.py) antes de confiar em qualquer uma."
+        )
         caminho = os.path.join(PASTA_RESULTADOS, f"{base}_comparativo.csv")
         tabela.to_csv(caminho)
         print(f"\nComparativo salvo em: {caminho}")
@@ -206,7 +224,9 @@ def fluxo_backtest(arquivo: str | None = None):
 
 
 def imprimir_ranking(r: dict, titulo: str) -> None:
+    """Mostra o ranking e o critério de vantagem."""
     import pandas as pd
+
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(f"\n{titulo}\n" + rk.tabela(r).drop(columns=["erro"]).to_string(index=False))
     print(f"\nCritério: {r['criterio']}")
@@ -219,6 +239,7 @@ def imprimir_ranking(r: dict, titulo: str) -> None:
 
 
 def fluxo_ranking(arquivo: str | None = None):
+    """Ranking honesto (janela recente x histórico, IC 95%)."""
     arquivo = arquivo or escolher_csv()
     if not arquivo:
         return
@@ -227,7 +248,8 @@ def fluxo_ranking(arquivo: str | None = None):
     min_ops = perguntar_numero("Mínimo de operações na janela", MIN_OPERACOES, int, 1)
     cfg = bt.ConfigBacktest(
         expiracao=perguntar_numero("Expiração (em velas)", 1, int, 1),
-        payout=perguntar_numero("Payout em % (ex: 85)", 85, float, 1, 500) / 100)
+        payout=perguntar_numero("Payout em % (ex: 85)", 85, float, 1, 500) / 100,
+    )
     r = rk.calcular_ranking(df, cfg, janela, min_ops)
     imprimir_ranking(r, f"Ranking | {arquivo} | {len(df)} velas | janela {r['janela']}")
     caminho = os.path.join(PASTA_RESULTADOS, f"{os.path.splitext(arquivo)[0]}_ranking.csv")
@@ -236,7 +258,9 @@ def fluxo_ranking(arquivo: str | None = None):
 
 
 def fluxo_validacao():
+    """Roda a validação walk-forward (validar.py)."""
     import validar
+
     cache = perguntar("Reaproveitar CSVs já baixados, se houver? (s/n)", "s").lower().startswith("s")
     payout = perguntar_numero("Payout em % (ex: 85)", 85, float, 1, 500)
     argv = sys.argv
@@ -248,12 +272,15 @@ def fluxo_validacao():
 
 
 def main():
+    """Menu principal do terminal."""
     configurar_log()
     opcoes = {
         "1": ("Baixar velas (escolher ativo e tempo gráfico)", fluxo_baixar),
         "2": ("Rodar backtest em um CSV salvo", fluxo_backtest),
-        "3": ("Listar CSVs salvos", lambda: print("\n" + ("\n".join(f"  - {c}" for c in dados.listar_csvs())
-                                                         or "  (nenhum)"))),
+        "3": (
+            "Listar CSVs salvos",
+            lambda: print("\n" + ("\n".join(f"  - {c}" for c in dados.listar_csvs()) or "  (nenhum)")),
+        ),
         "4": ("Ranking de estratégias (janela recente x histórico, IC 95%)", fluxo_ranking),
         "5": ("Validação walk-forward (4 pares, 20000 velas M5)", fluxo_validacao),
     }

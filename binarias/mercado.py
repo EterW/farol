@@ -1,16 +1,19 @@
 """Análise de mercado com critérios explícitos: tendência, força (ADX), volatilidade (ATR) e vela atual."""
+
 import pandas as pd
 
+from .config import (
+    ADX_FORTE,
+    ADX_MODERADO,
+    JANELA_VOL,
+    LIMITE_INCLINACAO,
+    PERIODO_ADX,
+    PERIODO_ATR,
+    PERIODO_MA,
+    VELAS_INCLINACAO,
+    VOL_SAUDAVEL,
+)
 from .indicadores import adx, atr, sma
-
-PERIODO_MA = 50
-VELAS_INCLINACAO = 10
-LIMITE_INCLINACAO = 0.5    # em ATRs ao longo de VELAS_INCLINACAO velas
-PERIODO_ADX = 14
-PERIODO_ATR = 14
-JANELA_VOL = 500
-ADX_MODERADO, ADX_FORTE = 20, 25
-VOL_SAUDAVEL = (20, 90)    # percentil do ATR considerado "saudável" (nem parado, nem caótico)
 
 CRITERIO = (
     f"Tendência: ALTA se o preço fecha acima da média de {PERIODO_MA} e a média subiu mais de "
@@ -26,6 +29,7 @@ def _num(v: float, casas: int = 2) -> str:
 
 
 def classificar_volatilidade(percentil: float) -> str:
+    """Percentil do ATR -> palavra (muito baixa ... muito alta)."""
     if percentil < 10:
         return "muito baixa"
     if percentil < 20:
@@ -38,6 +42,7 @@ def classificar_volatilidade(percentil: float) -> str:
 
 
 def forca_adx(valor: float) -> str:
+    """ADX -> força (fraca, moderada, forte)."""
     return "forte" if valor >= ADX_FORTE else "moderada" if valor >= ADX_MODERADO else "fraca"
 
 
@@ -68,12 +73,21 @@ def humano(a: dict) -> dict:
     else:
         intensidade = {"Fraca": "devagar", "Média": "com alguma firmeza", "Forte": "com firmeza"}[forca]
         base = f"O preço está {'subindo' if tend == 'SUBINDO' else 'descendo'} {intensidade}"
-    mov_txt = {"Calmo": "o mercado está calmo, com pouco movimento",
-               "Normal": "o movimento está normal",
-               "Agitado": "o mercado está agitado, com oscilações grandes"}[mov]
+    mov_txt = {
+        "Calmo": "o mercado está calmo, com pouco movimento",
+        "Normal": "o movimento está normal",
+        "Agitado": "o mercado está agitado, com oscilações grandes",
+    }[mov]
     frase = f"{base}, e {mov_txt}."
-    return {"ok": True, "tendencia": tend, "forca": forca, "movimento": mov, "vela": vela, "frase": frase,
-            "lateral": tend == "LATERAL"}
+    return {
+        "ok": True,
+        "tendencia": tend,
+        "forca": forca,
+        "movimento": mov,
+        "vela": vela,
+        "frase": frase,
+        "lateral": tend == "LATERAL",
+    }
 
 
 def analisar(df: pd.DataFrame, formando: pd.DataFrame | None = None, nome: str = "") -> dict:
@@ -114,14 +128,18 @@ def analisar(df: pd.DataFrame, formando: pd.DataFrame | None = None, nome: str =
     if tendencia == "LATERAL":
         txt_tend = f"mercado LATERAL (média de {PERIODO_MA} com inclinação de {_num(inclinacao)} ATR)"
     else:
-        txt_tend = (f"tendência de {tendencia} {forca} (ADX {_num(adx_v, 0)}), preço {_num(abs(distancia))} ATR "
-                    f"{'acima' if distancia > 0 else 'abaixo'} da média de {PERIODO_MA}")
+        txt_tend = (
+            f"tendência de {tendencia} {forca} (ADX {_num(adx_v, 0)}), preço {_num(abs(distancia))} ATR "
+            f"{'acima' if distancia > 0 else 'abaixo'} da média de {PERIODO_MA}"
+        )
     if tendencia == "LATERAL" and adx_v >= ADX_FORTE:
         txt_tend += f", mas ADX {_num(adx_v, 0)} indica movimento forte recente"
     vela_txt = {"ALTA": "verde (subindo)", "BAIXA": "vermelha (caindo)", "DOJI": "sem corpo (indecisão)"}[direcao_vela]
-    resumo = (f"{prefixo}{txt_tend[0].upper() + txt_tend[1:]}. Volatilidade {vol} "
-              f"(ATR no percentil {_num(percentil, 0)} das últimas {len(ult_atr)} velas). "
-              f"Vela {fonte}: {vela_txt}, corpo de {_num(abs(corpo) / atr_v)} ATR.")
+    resumo = (
+        f"{prefixo}{txt_tend[0].upper() + txt_tend[1:]}. Volatilidade {vol} "
+        f"(ATR no percentil {_num(percentil, 0)} das últimas {len(ult_atr)} velas). "
+        f"Vela {fonte}: {vela_txt}, corpo de {_num(abs(corpo) / atr_v)} ATR."
+    )
     saida = {
         "ok": True,
         "tendencia": tendencia,

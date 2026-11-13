@@ -2,15 +2,32 @@ from binarias import sinal
 
 
 def _linha(id_, acerto, decididas=200, ic_inf=None, vantagem=False):
-    return {"id": id_, "nome": id_.upper(), "janela": {
-        "acerto": acerto, "ic_inf": ic_inf if ic_inf is not None else acerto - 0.05, "ic_sup": acerto + 0.05,
-        "operacoes": decididas, "decididas": decididas, "lucro": 1.0, "vantagem": vantagem}}
+    return {
+        "id": id_,
+        "nome": id_.upper(),
+        "janela": {
+            "acerto": acerto,
+            "ic_inf": ic_inf if ic_inf is not None else acerto - 0.05,
+            "ic_sup": acerto + 0.05,
+            "operacoes": decididas,
+            "decididas": decididas,
+            "lucro": 1.0,
+            "vantagem": vantagem,
+        },
+    }
 
 
 def _ranking(melhor="a", linhas=None):
     linhas = linhas or [_linha("a", 0.62, ic_inf=0.56, vantagem=True), _linha("b", 0.57), _linha("c", 0.45)]
-    return {"melhor": melhor, "linhas": linhas, "break_even": 0.5405, "janela": 500, "min_ops": 100,
-            "confianca": 0.95, "expiracao": 1}
+    return {
+        "melhor": melhor,
+        "linhas": linhas,
+        "break_even": 0.5405,
+        "janela": 500,
+        "min_ops": 100,
+        "confianca": 0.95,
+        "expiracao": 1,
+    }
 
 
 def test_sem_estrategia_com_vantagem():

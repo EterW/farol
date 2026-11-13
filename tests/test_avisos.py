@@ -1,29 +1,47 @@
 """Avisos do Farol: só a líder avisa, conflito bloqueia, sem vantagem = silêncio, uma vez por vela,
 histerese na troca de líder, progresso de formação objetivo e ordem honesta do ranking."""
+
 import pandas as pd
 import pytest
+from conftest import df_aleatorio, df_de_ohlc
 
-from binarias import avisos, progresso, ranking as rk, sinal, veredito
+from binarias import avisos, progresso, sinal, veredito
+from binarias import ranking as rk
 from binarias.avisos import MotorAvisos, SeletorLider
 from binarias.estatistica import wilson
 from binarias.estrategias import ESTRATEGIAS, POR_ID
-from conftest import df_aleatorio, df_de_ohlc
 
 BE = 1 / 1.85
 
 
 def _linha(id_, wins, n, min_ops=100):
     inf, sup = wilson(wins, n) if n else (None, None)
-    jan = {"acerto": wins / n if n else None, "ic_inf": inf, "ic_sup": sup, "operacoes": n, "decididas": n,
-           "wins": wins, "lucro": 0.0, "vantagem": bool(n >= min_ops and inf is not None and inf > BE)}
+    jan = {
+        "acerto": wins / n if n else None,
+        "ic_inf": inf,
+        "ic_sup": sup,
+        "operacoes": n,
+        "decididas": n,
+        "wins": wins,
+        "lucro": 0.0,
+        "vantagem": bool(n >= min_ops and inf is not None and inf > BE),
+    }
     return {"id": id_, "nome": id_.upper(), "janela": jan, "forca": None, "selo": rk.selo(jan, None, min_ops)}
 
 
 def _ranking(linhas):
     linhas = sorted(linhas, key=rk.chave_ordem)
     melhor = next((x["id"] for x in linhas if x["janela"]["vantagem"]), None)
-    return {"linhas": linhas, "melhor": melhor, "break_even": BE, "janela": 1500, "min_ops": 100,
-            "confianca": 0.95, "expiracao": 1, "payout": 0.85}
+    return {
+        "linhas": linhas,
+        "melhor": melhor,
+        "break_even": BE,
+        "janela": 1500,
+        "min_ops": 100,
+        "confianca": 0.95,
+        "expiracao": 1,
+        "payout": 0.85,
+    }
 
 
 def _prog(id_, pct, direcao="CALL"):
@@ -49,12 +67,12 @@ def _formacao(r, lider, prog, observacao=False, motor=None, vela=1000):
 
 # --------------------------------------------------------------------------- só a líder avisa
 def test_so_a_lider_gera_aviso_de_entrada():
-    r = _ranking([_linha("a", 210, 320), _linha("b", 200, 320)])   # duas comprovadas; "a" é a líder
+    r = _ranking([_linha("a", 210, 320), _linha("b", 200, 320)])  # duas comprovadas; "a" é a líder
     sel = SeletorLider()
     assert sel.atualizar(r)["lider"] == "a"
-    _, av = _rodada(r, {"b": "CALL"}, sel.atual)                 # só a outra deu sinal
+    _, av = _rodada(r, {"b": "CALL"}, sel.atual)  # só a outra deu sinal
     assert not [a for a in av if a["notificar"] or a["som"]]
-    ver, av = _rodada(r, {"a": "PUT", "b": "PUT"}, sel.atual)   # a líder deu sinal (b concorda)
+    ver, av = _rodada(r, {"a": "PUT", "b": "PUT"}, sel.atual)  # a líder deu sinal (b concorda)
     entradas = [a for a in av if a["categoria"] == "entrada"]
     assert ver["estado"] == "ENTRAR" and len(entradas) == 1
     e = entradas[0]
@@ -65,9 +83,9 @@ def test_so_a_lider_gera_aviso_de_entrada():
 
 def test_formacao_so_da_lider_e_acima_do_limite():
     r = _ranking([_linha("a", 210, 320), _linha("b", 200, 320)])
-    _, av = _formacao(r, "a", _prog("b", 95))          # quem está se formando é a outra
+    _, av = _formacao(r, "a", _prog("b", 95))  # quem está se formando é a outra
     assert av == []
-    _, av = _formacao(r, "a", _prog("a", 60))          # líder abaixo do limite (70)
+    _, av = _formacao(r, "a", _prog("a", 60))  # líder abaixo do limite (70)
     assert av == []
     ver, av = _formacao(r, "a", _prog("a", 78))
     assert ver["estado"] == "PREPARANDO" and ver["progresso"]["pct"] == 78
@@ -85,7 +103,7 @@ def test_limite_de_formacao_configuravel():
 
 # --------------------------------------------------------------------------- conflito
 def test_conflito_bloqueia_a_entrada():
-    r = _ranking([_linha("a", 210, 320), _linha("b", 85, 150)])   # b: ≥ 30 ops e acerto acima do break-even
+    r = _ranking([_linha("a", 210, 320), _linha("b", 85, 150)])  # b: ≥ 30 ops e acerto acima do break-even
     ver, av = _rodada(r, {"a": "CALL", "b": "PUT"}, "a")
     assert ver["estado"] == "CONFLITO" and ver["titulo"] == "CONFLITO, NÃO ENTRAR"
     assert not [a for a in av if a["categoria"] == "entrada"]
@@ -96,7 +114,7 @@ def test_conflito_bloqueia_a_entrada():
 # --------------------------------------------------------------------------- sem vantagem comprovada
 @pytest.mark.parametrize("observacao", [False, True])
 def test_sem_vantagem_comprovada_nenhum_aviso_de_entrada_nem_formacao(observacao):
-    r = _ranking([_linha("a", 70, 120), _linha("b", 80, 99)])      # 58% (IC inclui BE) e 81% com 99 ops
+    r = _ranking([_linha("a", 70, 120), _linha("b", 80, 99)])  # 58% (IC inclui BE) e 81% com 99 ops
     sel = SeletorLider()
     assert sel.atualizar(r)["lider"] is None
     m = MotorAvisos()
@@ -115,7 +133,7 @@ def test_candidata_nao_comprovada_so_avisa_com_a_opcao_e_rotulada():
     assert "OBSERVAÇÃO, sem vantagem comprovada" in av[0]["texto"] and "OBSERVAÇÃO" in av[0]["titulo"]
     _, av = _rodada(r, {"a": "PUT"}, None, True, m, vela=2000)
     assert [a["categoria"] for a in av] == ["observacao"]
-    assert MotorAvisos.__dataclass_fields__["avisar_obs"].default is False   # desligado por padrão
+    assert MotorAvisos.__dataclass_fields__["avisar_obs"].default is False  # desligado por padrão
 
 
 # --------------------------------------------------------------------------- uma vez por vela
@@ -124,7 +142,7 @@ def test_nao_repete_aviso_na_mesma_vela():
     m = MotorAvisos()
     total = [a for _ in range(5) for a in _formacao(r, "a", _prog("a", 80), motor=m, vela=1000)[1]]
     assert len(total) == 1
-    assert len(_formacao(r, "a", _prog("a", 80), motor=m, vela=1060)[1]) == 1      # vela nova: avisa de novo
+    assert len(_formacao(r, "a", _prog("a", 80), motor=m, vela=1060)[1]) == 1  # vela nova: avisa de novo
     entradas = [a for _ in range(3) for a in _rodada(r, {"a": "CALL"}, "a", motor=m, vela=1120)[1]]
     assert len(entradas) == 1
     # na vela da entrada não há aviso de formação (evita "Entre agora" seguido de "se formando")
@@ -142,17 +160,17 @@ def test_resultado_com_placar_so_da_entrada_avisada():
 
 # --------------------------------------------------------------------------- histerese da líder
 def test_histerese_evita_troca_a_cada_vela():
-    a_fraca, b_forte = _linha("a", 205, 320), _linha("b", 207, 320)    # diferença < 2 p.p.
+    a_fraca, b_forte = _linha("a", 205, 320), _linha("b", 207, 320)  # diferença < 2 p.p.
     r_b = _ranking([a_fraca, b_forte])
     r_a = _ranking([_linha("a", 208, 320), _linha("b", 206, 320)])
     sel = SeletorLider()
     sel.atualizar(r_a)
     assert sel.atual == "a"
     trocas = 0
-    for k in range(10):                     # topo alterna a cada vela: a líder NÃO troca
+    for k in range(10):  # topo alterna a cada vela: a líder NÃO troca
         trocas += sel.atualizar(r_b if k % 2 == 0 else r_a)["trocou"]
     assert sel.atual == "a" and trocas == 0
-    for k in range(3):                      # b no topo por 3 velas seguidas: troca na 3ª
+    for k in range(3):  # b no topo por 3 velas seguidas: troca na 3ª
         res = sel.atualizar(r_b)
         assert res["trocou"] == (k == 2)
     assert sel.atual == "b"
@@ -162,9 +180,9 @@ def test_histerese_troca_na_hora_com_diferenca_grande_ou_lider_invalida():
     sel = SeletorLider()
     sel.atualizar(_ranking([_linha("a", 200, 320), _linha("b", 190, 320)]))
     assert sel.atual == "a"
-    res = sel.atualizar(_ranking([_linha("a", 200, 320), _linha("b", 230, 320)]))   # b muito melhor
+    res = sel.atualizar(_ranking([_linha("a", 200, 320), _linha("b", 230, 320)]))  # b muito melhor
     assert res["trocou"] and sel.atual == "b"
-    res = sel.atualizar(_ranking([_linha("a", 200, 320), _linha("b", 150, 320)]))   # b perdeu a vantagem
+    res = sel.atualizar(_ranking([_linha("a", 200, 320), _linha("b", 150, 320)]))  # b perdeu a vantagem
     assert res["trocou"] and sel.atual == "a"
     res = sel.atualizar(_ranking([_linha("a", 200, 320)]), ativas={"b"}, contar=False)  # a desmarcada
     assert res["trocou"] and sel.atual is None
@@ -188,9 +206,9 @@ def test_exemplos_do_testar_alertas_cobrem_os_3_tipos():
 def test_formula_do_progresso():
     assert progresso.pontuar(3, 3, None) == 100
     assert progresso.pontuar(0, 3, None) == 0
-    assert progresso.pontuar(2, 3, None) == 40          # 60% × 2/3
-    assert progresso.pontuar(2, 3, 0.5) == 60           # + 40% × (1 − 0,5)
-    assert progresso.pontuar(1, 1, 5.0) == 100          # tudo cumprido = 100, qualquer distância
+    assert progresso.pontuar(2, 3, None) == 40  # 60% × 2/3
+    assert progresso.pontuar(2, 3, 0.5) == 60  # + 40% × (1 − 0,5)
+    assert progresso.pontuar(1, 1, 5.0) == 100  # tudo cumprido = 100, qualquer distância
 
 
 @pytest.mark.parametrize("est", ESTRATEGIAS, ids=[e.id for e in ESTRATEGIAS])
@@ -207,8 +225,8 @@ def test_progresso_100_se_e_somente_se_o_sinal_sairia(est):
 
 
 def test_distancia_ate_o_gatilho_em_atr():
-    linhas = [(100.0, 100.5, 99.5, 100.0)] * 30                 # máxima das 20 anteriores = 100,5
-    linhas.append((100.0, 100.3, 99.9, 100.2))                  # fecha 0,3 abaixo do rompimento
+    linhas = [(100.0, 100.5, 99.5, 100.0)] * 30  # máxima das 20 anteriores = 100,5
+    linhas.append((100.0, 100.3, 99.9, 100.2))  # fecha 0,3 abaixo do rompimento
     p = progresso.calcular(POR_ID["rompimento_sr"], df_de_ohlc(linhas))
     assert p["dir"] == "CALL" and p["cumpridas"] == 0 and p["distancia_atr"] is not None
     assert 0 < p["distancia_atr"] <= 1 and 0 < p["pct"] < 40
@@ -216,8 +234,15 @@ def test_distancia_ate_o_gatilho_em_atr():
 
 # --------------------------------------------------------------------------- ordem honesta do ranking
 def test_ranking_ordena_por_status_e_limite_inferior_nunca_pelo_percentual():
-    r = _ranking([_linha("muitas", 130, 250), _linha("pequena", 9, 14), _linha("comprovada", 200, 320),
-                  _linha("vazia", 0, 0), _linha("media", 60, 110)])
+    r = _ranking(
+        [
+            _linha("muitas", 130, 250),
+            _linha("pequena", 9, 14),
+            _linha("comprovada", 200, 320),
+            _linha("vazia", 0, 0),
+            _linha("media", 60, 110),
+        ]
+    )
     ids = [x["id"] for x in r["linhas"]]
     assert ids[0] == "comprovada"
     assert ids.index("pequena") > ids.index("media") and ids.index("pequena") > ids.index("muitas")  # 64% com 14 ops
@@ -235,6 +260,7 @@ def test_desempate_explicito_por_operacoes_e_nome():
 
 def test_ranking_real_esta_na_ordem_declarada():
     from binarias.backtest import ConfigBacktest
+
     r = rk.calcular_ranking(df_aleatorio(3000, seed=4), ConfigBacktest())
     assert [rk.chave_ordem(x) for x in r["linhas"]] == sorted(rk.chave_ordem(x) for x in r["linhas"])
     assert pd.Series([rk.status(x) for x in r["linhas"]]).is_monotonic_increasing

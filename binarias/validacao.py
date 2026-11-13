@@ -8,6 +8,7 @@ Walk-forward sem olhar o final:
     treino como aquecimento (é passado), e só contam operações com sinal a partir do corte.
 Passa = no TESTE de TODOS os pares: >= min_ops operações E limite inferior do IC acima do break-even.
 """
+
 from dataclasses import replace
 
 import pandas as pd
@@ -22,8 +23,9 @@ from .ranking import estatisticas
 log = obter("validacao")
 
 
-def avaliar_trecho(df: pd.DataFrame, est, params: dict, cfg: bt.ConfigBacktest, inicio: int, fim: int,
-                   min_ops: int) -> dict:
+def avaliar_trecho(
+    df: pd.DataFrame, est, params: dict, cfg: bt.ConfigBacktest, inicio: int, fim: int, min_ops: int
+) -> dict:
     """Operações com sinal em [inicio, fim), vendo SÓ as velas df[:fim]."""
     parte = df.iloc[:fim]
     ops = bt.executar(parte, est.gerar_sinais(parte, **params), cfg).operacoes
@@ -37,8 +39,10 @@ def nota_treino(st: dict, be: float, min_ops: int) -> tuple:
     return (1 if st["decididas"] >= min_ops else 0, st["ic_inf"] - be, st["lucro"])
 
 
-def walk_forward(df: pd.DataFrame, est, cfg: bt.ConfigBacktest, fracao: float = FRACAO_TREINO,
-                 min_ops: int = MIN_OPERACOES) -> dict:
+def walk_forward(
+    df: pd.DataFrame, est, cfg: bt.ConfigBacktest, fracao: float = FRACAO_TREINO, min_ops: int = MIN_OPERACOES
+) -> dict:
+    """Escolhe parâmetros no treino e mede no teste (dados nunca vistos na escolha)."""
     cfg = replace(cfg, gales=0)
     be = break_even(cfg.payout)
     corte = int(len(df) * fracao)
@@ -49,6 +53,7 @@ def walk_forward(df: pd.DataFrame, est, cfg: bt.ConfigBacktest, fracao: float = 
         nota = nota_treino(st, be, min_ops)
         if melhor_nota is None or nota > melhor_nota:
             melhor, melhor_nota, melhor_st = params, nota, st
+    assert melhor is not None  # há sempre ao menos a combinação padrão
     teste = avaliar_trecho(df, est, melhor, cfg, corte, len(df), min_ops)
     return {"params": melhor, "combinacoes": len(combos), "corte": corte, "treino": melhor_st, "teste": teste}
 
@@ -56,14 +61,21 @@ def walk_forward(df: pd.DataFrame, est, cfg: bt.ConfigBacktest, fracao: float = 
 def _linha_stats(prefixo: str, st: dict) -> dict:
     def pct(v):
         return None if v is None else round(100 * v, 2)
-    return {f"{prefixo}_ops": st["operacoes"], f"{prefixo}_decididas": st["decididas"],
-            f"{prefixo}_acerto_%": pct(st["acerto"]), f"{prefixo}_ic95_inf_%": pct(st["ic_inf"]),
-            f"{prefixo}_ic95_sup_%": pct(st["ic_sup"]), f"{prefixo}_lucro": st["lucro"],
-            f"{prefixo}_vantagem": st["vantagem"]}
+
+    return {
+        f"{prefixo}_ops": st["operacoes"],
+        f"{prefixo}_decididas": st["decididas"],
+        f"{prefixo}_acerto_%": pct(st["acerto"]),
+        f"{prefixo}_ic95_inf_%": pct(st["ic_inf"]),
+        f"{prefixo}_ic95_sup_%": pct(st["ic_sup"]),
+        f"{prefixo}_lucro": st["lucro"],
+        f"{prefixo}_vantagem": st["vantagem"],
+    }
 
 
-def comparativo(dfs: dict[str, pd.DataFrame], cfg: bt.ConfigBacktest, min_ops: int = MIN_OPERACOES,
-                estrategias=None) -> pd.DataFrame:
+def comparativo(
+    dfs: dict[str, pd.DataFrame], cfg: bt.ConfigBacktest, min_ops: int = MIN_OPERACOES, estrategias=None
+) -> pd.DataFrame:
     """Todas as estratégias (parâmetros padrão) em todos os pares, dados completos."""
     cfg = replace(cfg, gales=0)
     linhas = []
@@ -79,8 +91,15 @@ def comparativo(dfs: dict[str, pd.DataFrame], cfg: bt.ConfigBacktest, min_ops: i
     return pd.DataFrame(linhas)
 
 
-def walk_forward_todos(dfs: dict[str, pd.DataFrame], cfg: bt.ConfigBacktest, fracao: float = FRACAO_TREINO,
-                       min_ops: int = MIN_OPERACOES, estrategias=None, progresso=None) -> pd.DataFrame:
+def walk_forward_todos(
+    dfs: dict[str, pd.DataFrame],
+    cfg: bt.ConfigBacktest,
+    fracao: float = FRACAO_TREINO,
+    min_ops: int = MIN_OPERACOES,
+    estrategias=None,
+    progresso=None,
+) -> pd.DataFrame:
+    """Walk-forward de todas as estratégias em todos os pares."""
     linhas = []
     for ativo, df in dfs.items():
         for est in estrategias or ESTRATEGIAS:
@@ -93,10 +112,19 @@ def walk_forward_todos(dfs: dict[str, pd.DataFrame], cfg: bt.ConfigBacktest, fra
                 linhas.append({"ativo": ativo, "estrategia": est.nome, "id": est.id, "erro": str(e)})
                 continue
             corte_data = df["datetime"].iat[wf["corte"]] if "datetime" in df else int(df["epoch"].iat[wf["corte"]])
-            linhas.append({"ativo": ativo, "estrategia": est.nome, "id": est.id,
-                           "params_escolhidos": ", ".join(f"{k}={v}" for k, v in wf["params"].items()) or "(sem parâmetros)",
-                           "combinacoes_testadas": wf["combinacoes"], "inicio_teste": corte_data,
-                           **_linha_stats("treino", wf["treino"]), **_linha_stats("teste", wf["teste"]), "erro": ""})
+            linhas.append(
+                {
+                    "ativo": ativo,
+                    "estrategia": est.nome,
+                    "id": est.id,
+                    "params_escolhidos": ", ".join(f"{k}={v}" for k, v in wf["params"].items()) or "(sem parâmetros)",
+                    "combinacoes_testadas": wf["combinacoes"],
+                    "inicio_teste": corte_data,
+                    **_linha_stats("treino", wf["treino"]),
+                    **_linha_stats("teste", wf["teste"]),
+                    "erro": "",
+                }
+            )
     return pd.DataFrame(linhas)
 
 
@@ -107,47 +135,61 @@ def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str 
     pares = sorted(wf["ativo"].unique())
     linhas = []
     for nome, g in ok.groupby("estrategia", sort=False):
-        linhas.append({
-            "estrategia": nome,
-            "pares_testados": len(g),
-            "pares_com_vantagem_no_teste": int(g["teste_vantagem"].sum()),
-            "pares_com_vantagem_no_treino": int(g["treino_vantagem"].sum()),
-            "pares_com_lucro_no_teste": int((g["teste_lucro"] > 0).sum()),
-            "acerto_medio_teste_%": round(float(g["teste_acerto_%"].mean()), 2) if g["teste_acerto_%"].notna().any() else None,
-            "pior_ic95_inf_teste_%": round(float(g["teste_ic95_inf_%"].min()), 2) if g["teste_ic95_inf_%"].notna().any() else None,
-            "ops_teste_total": int(g["teste_ops"].sum()),
-            "lucro_teste_total": round(float(g["teste_lucro"].sum()), 2),
-            "PASSA_EM_TODOS": bool(len(g) == len(pares) and g["teste_vantagem"].all()),
-        })
-    resumo = pd.DataFrame(linhas).sort_values(["PASSA_EM_TODOS", "pares_com_vantagem_no_teste", "acerto_medio_teste_%"],
-                                              ascending=[False, False, False])
+        linhas.append(
+            {
+                "estrategia": nome,
+                "pares_testados": len(g),
+                "pares_com_vantagem_no_teste": int(g["teste_vantagem"].sum()),
+                "pares_com_vantagem_no_treino": int(g["treino_vantagem"].sum()),
+                "pares_com_lucro_no_teste": int((g["teste_lucro"] > 0).sum()),
+                "acerto_medio_teste_%": round(float(g["teste_acerto_%"].mean()), 2)
+                if g["teste_acerto_%"].notna().any()
+                else None,
+                "pior_ic95_inf_teste_%": round(float(g["teste_ic95_inf_%"].min()), 2)
+                if g["teste_ic95_inf_%"].notna().any()
+                else None,
+                "ops_teste_total": int(g["teste_ops"].sum()),
+                "lucro_teste_total": round(float(g["teste_lucro"].sum()), 2),
+                "PASSA_EM_TODOS": bool(len(g) == len(pares) and g["teste_vantagem"].all()),
+            }
+        )
+    resumo = pd.DataFrame(linhas).sort_values(
+        ["PASSA_EM_TODOS", "pares_com_vantagem_no_teste", "acerto_medio_teste_%"], ascending=[False, False, False]
+    )
     passam = resumo[resumo["PASSA_EM_TODOS"]]["estrategia"].tolist()
 
     # efeito de seleção: a melhor no treino de cada par, e como ela foi no teste
     selecao = []
     for ativo, g in ok.groupby("ativo"):
-        g = g.assign(_nota=g["treino_ic95_inf_%"].fillna(-1) - 100 * be
-                     + 1000 * (g["treino_decididas"] >= min_ops))
+        g = g.assign(_nota=g["treino_ic95_inf_%"].fillna(-1) - 100 * be + 1000 * (g["treino_decididas"] >= min_ops))
         top = g.sort_values("_nota", ascending=False).iloc[0]
-        selecao.append(f"  {ativo}: escolhida no treino = {top['estrategia']} ({top['params_escolhidos']}) | "
-                       f"treino {top['treino_acerto_%']}% (IC inf {top['treino_ic95_inf_%']}%, {top['treino_decididas']} ops) "
-                       f"-> teste {top['teste_acerto_%']}% (IC inf {top['teste_ic95_inf_%']}%, {top['teste_decididas']} ops)")
+        selecao.append(
+            f"  {ativo}: escolhida no treino = {top['estrategia']} ({top['params_escolhidos']}) | "
+            f"treino {top['treino_acerto_%']}% (IC inf {top['treino_ic95_inf_%']}%, {top['treino_decididas']} ops) "
+            f"-> teste {top['teste_acerto_%']}% (IC inf {top['teste_ic95_inf_%']}%, {top['teste_decididas']} ops)"
+        )
 
     t = []
     t.append("RELATÓRIO DE VALIDAÇÃO (walk-forward)")
     t.append("=" * 72)
     if info:
         t.append(info)
-    t.append(f"Payout {cfg.payout:.0%} -> acerto de break-even {be:.2%}. Expiração {cfg.expiracao} vela(s). "
-             f"Empate: {cfg.empate}. Sem gale.")
-    t.append(f"Critério para PASSAR: no período de TESTE (dados nunca vistos na escolha) de TODOS os "
-             f"{len(pares)} pares, pelo menos {min_ops} operações decididas E limite inferior do IC de Wilson 95% "
-             f"acima de {be:.2%}.")
+    t.append(
+        f"Payout {cfg.payout:.0%} -> acerto de break-even {be:.2%}. Expiração {cfg.expiracao} vela(s). "
+        f"Empate: {cfg.empate}. Sem gale."
+    )
+    t.append(
+        f"Critério para PASSAR: no período de TESTE (dados nunca vistos na escolha) de TODOS os "
+        f"{len(pares)} pares, pelo menos {min_ops} operações decididas E limite inferior do IC de Wilson 95% "
+        f"acima de {be:.2%}."
+    )
     t.append("")
     if passam:
         t.append(f"PASSARAM EM TODOS OS PARES ({len(passam)}): {', '.join(passam)}")
-        t.append("Mesmo assim: foram testadas várias estratégias e combinações; acompanhe ao vivo (resultados/"
-                 "sinais_ao_vivo.csv) antes de arriscar dinheiro.")
+        t.append(
+            "Mesmo assim: foram testadas várias estratégias e combinações; acompanhe ao vivo (resultados/"
+            "sinais_ao_vivo.csv) antes de arriscar dinheiro."
+        )
     else:
         t.append("NENHUMA ESTRATÉGIA PASSOU NA VALIDAÇÃO.")
         t.append("Nenhuma mostrou acerto estatisticamente acima do break-even, fora da amostra, em todos os pares.")
@@ -156,10 +198,12 @@ def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str 
     t.append("Por estratégia (teste = 30% final):")
     for _, r in resumo.iterrows():
         marca = "PASSA" if r["PASSA_EM_TODOS"] else "não passa"
-        t.append(f"  [{marca:^9}] {r['estrategia']:<28} vantagem no teste em {r['pares_com_vantagem_no_teste']}/"
-                 f"{r['pares_testados']} pares (treino: {r['pares_com_vantagem_no_treino']}/{r['pares_testados']}), "
-                 f"acerto médio teste {r['acerto_medio_teste_%']}%, pior IC inf {r['pior_ic95_inf_teste_%']}%, "
-                 f"lucro teste {r['lucro_teste_total']}")
+        t.append(
+            f"  [{marca:^9}] {r['estrategia']:<28} vantagem no teste em {r['pares_com_vantagem_no_teste']}/"
+            f"{r['pares_testados']} pares (treino: {r['pares_com_vantagem_no_treino']}/{r['pares_testados']}), "
+            f"acerto médio teste {r['acerto_medio_teste_%']}%, pior IC inf {r['pior_ic95_inf_teste_%']}%, "
+            f"lucro teste {r['lucro_teste_total']}"
+        )
     t.append("")
     t.append("Efeito de seleção (escolher a melhor no passado e ver o que acontece depois):")
     t.extend(selecao)

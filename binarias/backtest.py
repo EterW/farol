@@ -1,4 +1,5 @@
 """Motor de backtest para opções binárias (CALL/PUT com expiração em velas)."""
+
 import os
 from dataclasses import asdict, dataclass
 
@@ -7,19 +8,32 @@ import pandas as pd
 from .config import EMPATE_PADRAO, EXPIRACAO_PADRAO, PASTA_RESULTADOS, PAYOUT_PADRAO
 from .estatistica import break_even, wilson
 
-COLUNAS_OPS = ["idx_sinal", "idx_fim", "data_sinal", "data_entrada", "direcao", "preco_entrada",
-               "preco_saida", "resultado", "gale", "lucro", "banca"]
+COLUNAS_OPS = [
+    "idx_sinal",
+    "idx_fim",
+    "data_sinal",
+    "data_entrada",
+    "direcao",
+    "preco_entrada",
+    "preco_saida",
+    "resultado",
+    "gale",
+    "lucro",
+    "banca",
+]
 
 
 @dataclass
 class ConfigBacktest:
-    expiracao: int = EXPIRACAO_PADRAO   # expiração em quantidade de velas
-    payout: float = PAYOUT_PADRAO       # 0.85 = 85%
+    """Parâmetros de uma simulação (expiração, payout, gale, banca e regra de empate)."""
+
+    expiracao: int = EXPIRACAO_PADRAO  # expiração em quantidade de velas
+    payout: float = PAYOUT_PADRAO  # 0.85 = 85%
     valor_entrada: float = 10.0
-    gales: int = 0                      # nº máximo de martingales
-    fator_gale: float = 2.0             # multiplicador da entrada a cada gale
+    gales: int = 0  # nº máximo de martingales
+    fator_gale: float = 2.0  # multiplicador da entrada a cada gale
     banca_inicial: float = 1000.0
-    empate: str = EMPATE_PADRAO         # "devolve" ou "perde"
+    empate: str = EMPATE_PADRAO  # "devolve" ou "perde"
 
     def __post_init__(self):
         if self.empate not in ("devolve", "perde"):
@@ -37,6 +51,8 @@ def resolver(direcao: str, preco_entrada: float, preco_saida: float, empate: str
 
 @dataclass
 class ResultadoBacktest:
+    """Operações simuladas e o resumo estatístico."""
+
     operacoes: pd.DataFrame
     resumo: dict
 
@@ -68,7 +84,8 @@ def executar(df: pd.DataFrame, sinais: pd.Series, cfg: ConfigBacktest) -> Result
         resultado = None
         gale = 0
         completa = False
-        primeira_entrada = preco_in = preco_out = None
+        primeira_entrada: float | None = None
+        preco_out: float | None = None
         while True:
             fim = entrada + exp - 1
             if fim >= n:
@@ -90,14 +107,23 @@ def executar(df: pd.DataFrame, sinais: pd.Series, cfg: ConfigBacktest) -> Result
             break
         if not completa:
             break  # nenhuma operação posterior caberia nos dados
+        assert primeira_entrada is not None and preco_out is not None  # operação completa
         banca += lucro_total
-        ops.append({
-            "idx_sinal": i, "idx_fim": fim,
-            "data_sinal": datas[i], "data_entrada": datas[i + 1], "direcao": direcao,
-            "preco_entrada": float(primeira_entrada), "preco_saida": float(preco_out),
-            "resultado": resultado, "gale": gale,
-            "lucro": round(lucro_total, 2), "banca": round(banca, 2),
-        })
+        ops.append(
+            {
+                "idx_sinal": i,
+                "idx_fim": fim,
+                "data_sinal": datas[i],
+                "data_entrada": datas[i + 1],
+                "direcao": direcao,
+                "preco_entrada": float(primeira_entrada),
+                "preco_saida": float(preco_out),
+                "resultado": resultado,
+                "gale": gale,
+                "lucro": round(lucro_total, 2),
+                "banca": round(banca, 2),
+            }
+        )
         livre_a_partir = fim
 
     operacoes = pd.DataFrame(ops, columns=COLUNAS_OPS)
@@ -115,6 +141,7 @@ def _maior_sequencia(serie: pd.Series, valor: str) -> int:
 
 
 def resumir(ops: pd.DataFrame, cfg: ConfigBacktest) -> dict:
+    """Resumo das operações: acerto, IC 95%, lucro, drawdown e sequências."""
     total = len(ops)
     wins = int((ops["resultado"] == "WIN").sum())
     losses = int((ops["resultado"] == "LOSS").sum())
@@ -148,6 +175,7 @@ def resumir(ops: pd.DataFrame, cfg: ConfigBacktest) -> dict:
 
 
 def imprimir_resumo(nome: str, res: ResultadoBacktest, cfg: ConfigBacktest) -> None:
+    """Mostra o resumo no terminal."""
     print("\n" + "=" * 52)
     print(f" {nome}")
     print("=" * 52)
@@ -162,11 +190,13 @@ def imprimir_resumo(nome: str, res: ResultadoBacktest, cfg: ConfigBacktest) -> N
 
 
 def salvar_operacoes(res: ResultadoBacktest, nome_arquivo: str) -> str:
+    """Grava as operações em resultados/ e devolve o caminho."""
     caminho = os.path.join(PASTA_RESULTADOS, nome_arquivo)
     res.operacoes.to_csv(caminho, index=False)
     return caminho
 
 
 def comparar(resultados: dict[str, ResultadoBacktest]) -> pd.DataFrame:
+    """Tabela comparativa de várias estratégias, ordenada pelo lucro."""
     tabela = pd.DataFrame({nome: r.resumo for nome, r in resultados.items()}).T
     return tabela.sort_values("lucro", ascending=False)

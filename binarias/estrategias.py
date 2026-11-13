@@ -21,6 +21,7 @@ from typing import NamedTuple
 import pandas as pd
 
 from .indicadores import bandas, cor, niveis_anteriores, rsi, sma
+from .timeframes import granularidade_inferida
 
 __all__ = ["ESTRATEGIAS", "EXPLICACAO", "POR_ID", "Condicao", "Estrategia", "ultimo_valor"]
 
@@ -68,12 +69,6 @@ def _falso(df: pd.DataFrame) -> pd.Series:
     return pd.Series(False, index=df.index)
 
 
-def _granularidade(df: pd.DataFrame) -> int:
-    d = df["epoch"].diff()
-    d = d[d > 0]
-    return int(d.mode().iloc[0]) if len(d) else 60
-
-
 # --------------------------------------------------------------------------- #
 # Estratégias: condições + sinal
 # --------------------------------------------------------------------------- #
@@ -93,8 +88,10 @@ def _rotulo_vela(k: int) -> str:
 
 def reversao_sequencia_condicoes(df, n=3):
     c = cor(df)
-    return [_c(f"{_rotulo_vela(k)} vermelha", f"{_rotulo_vela(k)} verde", c.shift(k) == -1, c.shift(k) == 1)
-            for k in range(int(n))]
+    return [
+        _c(f"{_rotulo_vela(k)} vermelha", f"{_rotulo_vela(k)} verde", c.shift(k) == -1, c.shift(k) == 1)
+        for k in range(int(n))
+    ]
 
 
 def reversao_sequencia(df, n=3):
@@ -108,11 +105,18 @@ def cruzamento_medias_condicoes(df, rapida=5, lenta=20):
     base = validas & validas.shift(1, fill_value=False)
     acima, abaixo = mr > ml, mr < ml
     return [
-        _c(f"Média {rapida} estava abaixo (ou igual) da média {lenta}",
-           f"Média {rapida} estava acima (ou igual) da média {lenta}",
-           base & ~acima.shift(1, fill_value=False), base & ~abaixo.shift(1, fill_value=False)),
-        _c(f"Média {rapida} cruza para cima da média {lenta}", f"Média {rapida} cruza para baixo da média {lenta}",
-           acima, abaixo),
+        _c(
+            f"Média {rapida} estava abaixo (ou igual) da média {lenta}",
+            f"Média {rapida} estava acima (ou igual) da média {lenta}",
+            base & ~acima.shift(1, fill_value=False),
+            base & ~abaixo.shift(1, fill_value=False),
+        ),
+        _c(
+            f"Média {rapida} cruza para cima da média {lenta}",
+            f"Média {rapida} cruza para baixo da média {lenta}",
+            acima,
+            abaixo,
+        ),
     ]
 
 
@@ -125,10 +129,18 @@ def rsi_reversao_condicoes(df, periodo=14, sobrecompra=70, sobrevenda=30):
     r = rsi(df["close"], int(periodo))
     ant = r.shift(1)
     return [
-        _c(f"RSI estava abaixo de {sobrevenda} (sobrevenda)", f"RSI estava acima de {sobrecompra} (sobrecompra)",
-           ant < sobrevenda, ant > sobrecompra),
-        _c(f"RSI volta para {sobrevenda} ou mais", f"RSI volta para {sobrecompra} ou menos",
-           r >= sobrevenda, r <= sobrecompra),
+        _c(
+            f"RSI estava abaixo de {sobrevenda} (sobrevenda)",
+            f"RSI estava acima de {sobrecompra} (sobrecompra)",
+            ant < sobrevenda,
+            ant > sobrecompra,
+        ),
+        _c(
+            f"RSI volta para {sobrevenda} ou mais",
+            f"RSI volta para {sobrecompra} ou menos",
+            r >= sobrevenda,
+            r <= sobrecompra,
+        ),
     ]
 
 
@@ -142,7 +154,7 @@ def mhi_condicoes(df, tamanho_quadrante=5):
     if len(df) < 3:
         f = _falso(df)
         return [_c("Pelo menos 3 velas", None, f, f)]
-    gran = _granularidade(df)
+    gran = granularidade_inferida(df) or 60
     posicao = (df["epoch"] // gran) % tamanho_quadrante
     c = cor(df)
     soma3 = c.rolling(3).sum()
@@ -154,8 +166,12 @@ def mhi_condicoes(df, tamanho_quadrante=5):
         _c("Nenhuma vela parada (doji) entre as 3 últimas", None, sem_doji, sem_doji),
         _c("3 últimas velas sem buraco de horário", None, continuas, continuas),
         # maioria vermelha -> minoria verde -> CALL
-        _c("Maioria vermelha nas 3 últimas (aposta na minoria verde)",
-           "Maioria verde nas 3 últimas (aposta na minoria vermelha)", soma3 < 0, soma3 > 0),
+        _c(
+            "Maioria vermelha nas 3 últimas (aposta na minoria verde)",
+            "Maioria verde nas 3 últimas (aposta na minoria vermelha)",
+            soma3 < 0,
+            soma3 > 0,
+        ),
     ]
 
 
@@ -171,8 +187,12 @@ def tendencia_recuo_condicoes(df, periodo=50):
     ma_ant = ma.shift(1)
     c = cor(df)
     return [
-        _c(f"Fecha acima da média de {periodo}", f"Fecha abaixo da média de {periodo}",
-           df["close"] > ma, df["close"] < ma),
+        _c(
+            f"Fecha acima da média de {periodo}",
+            f"Fecha abaixo da média de {periodo}",
+            df["close"] > ma,
+            df["close"] < ma,
+        ),
         _c("Vela anterior recuou até a média", None, df["low"].shift(1) <= ma_ant, df["high"].shift(1) >= ma_ant),
         _c("Vela atual verde (voltou a subir)", "Vela atual vermelha (voltou a cair)", c == 1, c == -1),
     ]
@@ -188,8 +208,12 @@ def bollinger_rsi_condicoes(df, periodo_bb=20, desvios=2.0, periodo_rsi=14, sobr
     sup, inf, _ = bandas(df["close"], periodo_bb, desvios)
     r = rsi(df["close"], int(periodo_rsi))
     return [
-        _c("Fecha abaixo da banda de Bollinger inferior", "Fecha acima da banda de Bollinger superior",
-           df["close"] < inf, df["close"] > sup),
+        _c(
+            "Fecha abaixo da banda de Bollinger inferior",
+            "Fecha acima da banda de Bollinger superior",
+            df["close"] < inf,
+            df["close"] > sup,
+        ),
         _c(f"RSI abaixo de {sobrevenda}", f"RSI acima de {sobrecompra}", r < sobrevenda, r > sobrecompra),
     ]
 
@@ -208,14 +232,22 @@ def pin_bar_condicoes(df, proporcao=2.5, corpo_max=0.3, exigir_extremo=1, n=20):
     base = (amplitude > 0) & (corpo <= corpo_max * amplitude)
     conds = [
         _c(f"Corpo pequeno (até {corpo_max:.0%} da vela)", None, base, base),
-        _c(f"Pavio inferior longo (≥ {proporcao}× o corpo)", f"Pavio superior longo (≥ {proporcao}× o corpo)",
-           (pavio_inf >= proporcao * corpo) & (pavio_sup * proporcao <= pavio_inf),
-           (pavio_sup >= proporcao * corpo) & (pavio_inf * proporcao <= pavio_sup)),
+        _c(
+            f"Pavio inferior longo (≥ {proporcao}× o corpo)",
+            f"Pavio superior longo (≥ {proporcao}× o corpo)",
+            (pavio_inf >= proporcao * corpo) & (pavio_sup * proporcao <= pavio_inf),
+            (pavio_sup >= proporcao * corpo) & (pavio_inf * proporcao <= pavio_sup),
+        ),
     ]
     if int(exigir_extremo):
-        conds.append(_c(f"Faz a mínima das últimas {int(n)} velas", f"Faz a máxima das últimas {int(n)} velas",
-                        df["low"] <= df["low"].rolling(int(n)).min(),
-                        df["high"] >= df["high"].rolling(int(n)).max()))
+        conds.append(
+            _c(
+                f"Faz a mínima das últimas {int(n)} velas",
+                f"Faz a máxima das últimas {int(n)} velas",
+                df["low"] <= df["low"].rolling(int(n)).min(),
+                df["high"] >= df["high"].rolling(int(n)).max(),
+            )
+        )
     return conds
 
 
@@ -228,9 +260,14 @@ def pin_bar(df, proporcao=2.5, corpo_max=0.3, exigir_extremo=1, n=20):
 
 def rompimento_sr_condicoes(df, n=20):
     resist, suporte = niveis_anteriores(df, n)
-    return [_c(f"Fecha acima da máxima das {int(n)} velas anteriores",
-               f"Fecha abaixo da mínima das {int(n)} velas anteriores",
-               df["close"] > resist, df["close"] < suporte)]
+    return [
+        _c(
+            f"Fecha acima da máxima das {int(n)} velas anteriores",
+            f"Fecha abaixo da mínima das {int(n)} velas anteriores",
+            df["close"] > resist,
+            df["close"] < suporte,
+        )
+    ]
 
 
 def rompimento_sr(df, n=20):
@@ -242,8 +279,12 @@ def rejeicao_sr_condicoes(df, n=20):
     resist, suporte = niveis_anteriores(df, n)
     dentro = (df["close"] < resist) & (df["close"] > suporte)
     return [
-        _c(f"Toca a mínima das {int(n)} velas anteriores", f"Toca a máxima das {int(n)} velas anteriores",
-           df["low"] <= suporte, df["high"] >= resist),
+        _c(
+            f"Toca a mínima das {int(n)} velas anteriores",
+            f"Toca a máxima das {int(n)} velas anteriores",
+            df["low"] <= suporte,
+            df["high"] >= resist,
+        ),
         _c("Fecha de volta dentro da faixa", None, dentro, dentro),
     ]
 
@@ -263,8 +304,12 @@ def engolfo_condicoes(df):
     return [
         _c("Vela anterior vermelha", "Vela anterior verde", c_ant == -1, c_ant == 1),
         _c("Vela atual verde", "Vela atual vermelha", c == 1, c == -1),
-        _c("Corpo atual engole o corpo anterior", None,
-           (o <= f_ant) & (f >= o_ant) & maior, (o >= f_ant) & (f <= o_ant) & maior),
+        _c(
+            "Corpo atual engole o corpo anterior",
+            None,
+            (o <= f_ant) & (f >= o_ant) & maior,
+            (o >= f_ant) & (f <= o_ant) & maior,
+        ),
     ]
 
 
@@ -290,17 +335,20 @@ class Estrategia:
     funcao: Callable
     parametros: dict = field(default_factory=dict)
     condicoes: Callable | None = None
-    grade: dict = field(default_factory=dict)   # valores testados na otimização walk-forward
+    grade: dict = field(default_factory=dict)  # valores testados na otimização walk-forward
 
     @property
     def id(self) -> str:
+        """Identificador estável (nome da função de sinal)."""
         return self.funcao.__name__
 
     @property
     def descricao(self) -> str:
+        """Descrição técnica em uma linha (docstring do sinal)."""
         return _resumo_doc(self.funcao)
 
     def gerar_sinais(self, df: pd.DataFrame, **params) -> pd.Series:
+        """Série de sinais ('CALL'/'PUT'/None) alinhada ao DataFrame."""
         return self.funcao(df, **{**self.parametros, **params})
 
     def gerar_condicoes(self, df: pd.DataFrame, **params) -> list[Condicao]:
@@ -315,8 +363,10 @@ class Estrategia:
         if not self.grade:
             return [dict(self.parametros)]
         chaves = list(self.grade)
-        combos = [{**self.parametros, **dict(zip(chaves, valores, strict=True))}
-                  for valores in product(*(self.grade[k] for k in chaves))]
+        combos = [
+            {**self.parametros, **dict(zip(chaves, valores, strict=True))}
+            for valores in product(*(self.grade[k] for k in chaves))
+        ]
         if dict(self.parametros) not in combos:
             combos.insert(0, dict(self.parametros))
         return combos
@@ -324,25 +374,61 @@ class Estrategia:
 
 ESTRATEGIAS = [
     Estrategia("Seguir cor", "COR", seguir_cor, condicoes=seguir_cor_condicoes),
-    Estrategia("Reversão de sequência", "REV", reversao_sequencia, {"n": 3},
-               condicoes=reversao_sequencia_condicoes, grade={"n": [2, 3, 4, 5]}),
-    Estrategia("Cruzamento de médias", "MM", cruzamento_medias, {"rapida": 5, "lenta": 20},
-               condicoes=cruzamento_medias_condicoes, grade={"rapida": [3, 5, 9], "lenta": [20, 50]}),
-    Estrategia("RSI reversão", "RSI", rsi_reversao, {"periodo": 14, "sobrecompra": 70, "sobrevenda": 30},
-               condicoes=rsi_reversao_condicoes,
-               grade={"periodo": [7, 14, 21], "sobrecompra": [70, 80], "sobrevenda": [30, 20]}),
+    Estrategia(
+        "Reversão de sequência",
+        "REV",
+        reversao_sequencia,
+        {"n": 3},
+        condicoes=reversao_sequencia_condicoes,
+        grade={"n": [2, 3, 4, 5]},
+    ),
+    Estrategia(
+        "Cruzamento de médias",
+        "MM",
+        cruzamento_medias,
+        {"rapida": 5, "lenta": 20},
+        condicoes=cruzamento_medias_condicoes,
+        grade={"rapida": [3, 5, 9], "lenta": [20, 50]},
+    ),
+    Estrategia(
+        "RSI reversão",
+        "RSI",
+        rsi_reversao,
+        {"periodo": 14, "sobrecompra": 70, "sobrevenda": 30},
+        condicoes=rsi_reversao_condicoes,
+        grade={"periodo": [7, 14, 21], "sobrecompra": [70, 80], "sobrevenda": [30, 20]},
+    ),
     Estrategia("MHI 1 (minoria)", "MHI", mhi, {"tamanho_quadrante": 5}, condicoes=mhi_condicoes),
-    Estrategia("Tendência + recuo à média", "TEND", tendencia_recuo, {"periodo": 50},
-               condicoes=tendencia_recuo_condicoes, grade={"periodo": [20, 50, 100]}),
-    Estrategia("Bollinger + RSI", "BB", bollinger_rsi,
-               {"periodo_bb": 20, "desvios": 2.0, "periodo_rsi": 14, "sobrecompra": 70, "sobrevenda": 30},
-               condicoes=bollinger_rsi_condicoes, grade={"desvios": [2.0, 2.5], "periodo_rsi": [7, 14]}),
-    Estrategia("Pin Bar", "PIN", pin_bar, {"proporcao": 2.5, "corpo_max": 0.3, "exigir_extremo": 1, "n": 20},
-               condicoes=pin_bar_condicoes, grade={"proporcao": [2.0, 2.5, 3.0], "n": [10, 20]}),
-    Estrategia("Rompimento S/R", "ROMP", rompimento_sr, {"n": 20}, condicoes=rompimento_sr_condicoes,
-               grade={"n": [10, 20, 50]}),
-    Estrategia("Rejeição S/R", "REJ", rejeicao_sr, {"n": 20}, condicoes=rejeicao_sr_condicoes,
-               grade={"n": [10, 20, 50]}),
+    Estrategia(
+        "Tendência + recuo à média",
+        "TEND",
+        tendencia_recuo,
+        {"periodo": 50},
+        condicoes=tendencia_recuo_condicoes,
+        grade={"periodo": [20, 50, 100]},
+    ),
+    Estrategia(
+        "Bollinger + RSI",
+        "BB",
+        bollinger_rsi,
+        {"periodo_bb": 20, "desvios": 2.0, "periodo_rsi": 14, "sobrecompra": 70, "sobrevenda": 30},
+        condicoes=bollinger_rsi_condicoes,
+        grade={"desvios": [2.0, 2.5], "periodo_rsi": [7, 14]},
+    ),
+    Estrategia(
+        "Pin Bar",
+        "PIN",
+        pin_bar,
+        {"proporcao": 2.5, "corpo_max": 0.3, "exigir_extremo": 1, "n": 20},
+        condicoes=pin_bar_condicoes,
+        grade={"proporcao": [2.0, 2.5, 3.0], "n": [10, 20]},
+    ),
+    Estrategia(
+        "Rompimento S/R", "ROMP", rompimento_sr, {"n": 20}, condicoes=rompimento_sr_condicoes, grade={"n": [10, 20, 50]}
+    ),
+    Estrategia(
+        "Rejeição S/R", "REJ", rejeicao_sr, {"n": 20}, condicoes=rejeicao_sr_condicoes, grade={"n": [10, 20, 50]}
+    ),
     Estrategia("Engolfo", "ENG", engolfo, condicoes=engolfo_condicoes),
 ]
 POR_ID = {e.id: e for e in ESTRATEGIAS}

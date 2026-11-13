@@ -1,7 +1,8 @@
 import numpy as np
-
-from binarias import indicadores as ind, mercado
 from conftest import df_aleatorio, df_de_ohlc
+
+from binarias import indicadores as ind
+from binarias import mercado
 
 
 def _serie(fech, ruido=0.0, seed=0):
@@ -34,7 +35,12 @@ def test_vela_em_formacao_e_volatilidade():
     a = mercado.analisar(df, formando)
     assert a["vela_atual"] == {**a["vela_atual"], "direcao": "BAIXA", "fonte": "em formação"}
     assert 0 <= a["atr_percentil"] <= 100 and a["volatilidade"] in (
-        "muito baixa", "baixa", "normal", "alta", "muito alta")
+        "muito baixa",
+        "baixa",
+        "normal",
+        "alta",
+        "muito alta",
+    )
 
 
 def test_poucas_velas():
@@ -44,7 +50,7 @@ def test_poucas_velas():
 
 def test_adx_intervalo_e_rsi():
     df = df_aleatorio(800, seed=2)
-    v, mais, menos = ind.adx(df)
+    v, mais, _menos = ind.adx(df)
     assert v.dropna().between(0, 100).all() and mais.dropna().ge(0).all()
     r = ind.rsi(df["close"], 14).dropna()
     assert r.between(0, 100).all()

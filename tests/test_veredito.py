@@ -1,14 +1,16 @@
 """Regras de honestidade do veredito (tela principal) e da linguagem simples."""
-import itertools
+
 import os
 import random
 import re
+from pathlib import Path
 
 import pytest
-
-from binarias import demo, mercado, ranking as rk, scanner, sinal, veredito
-from binarias.estatistica import wilson
 from conftest import df_aleatorio
+
+from binarias import demo, mercado, scanner, sinal, veredito
+from binarias import ranking as rk
+from binarias.estatistica import wilson
 
 BE = 1 / 1.85
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,8 +18,16 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _linha(id_, wins, n, min_ops=100, forca="estável"):
     inf, sup = wilson(wins, n) if n else (None, None)
-    jan = {"acerto": wins / n if n else None, "ic_inf": inf, "ic_sup": sup, "operacoes": n, "decididas": n,
-           "wins": wins, "lucro": 0.0, "vantagem": bool(n >= min_ops and inf is not None and inf > BE)}
+    jan = {
+        "acerto": wins / n if n else None,
+        "ic_inf": inf,
+        "ic_sup": sup,
+        "operacoes": n,
+        "decididas": n,
+        "wins": wins,
+        "lucro": 0.0,
+        "vantagem": bool(n >= min_ops and inf is not None and inf > BE),
+    }
     f = {"estado": forca, "z": None}
     return {"id": id_, "nome": id_.upper(), "janela": jan, "forca": f, "selo": rk.selo(jan, f, min_ops)}
 
@@ -25,8 +35,16 @@ def _linha(id_, wins, n, min_ops=100, forca="estável"):
 def _ranking(linhas):
     linhas = sorted(linhas, key=lambda l: (0 if l["janela"]["vantagem"] else 1, -(l["janela"]["ic_inf"] or 0)))
     melhor = next((l["id"] for l in linhas if l["janela"]["vantagem"]), None)
-    return {"linhas": linhas, "melhor": melhor, "break_even": BE, "janela": 500, "min_ops": 100,
-            "confianca": 0.95, "expiracao": 1, "payout": 0.85}
+    return {
+        "linhas": linhas,
+        "melhor": melhor,
+        "break_even": BE,
+        "janela": 500,
+        "min_ops": 100,
+        "confianca": 0.95,
+        "expiracao": 1,
+        "payout": 0.85,
+    }
 
 
 # --------------------------------------------------------------------------- ENTRAR só com vantagem comprovada
@@ -59,7 +77,7 @@ def test_entrar_exige_vantagem_comprovada_em_qualquer_combinacao():
 
 
 def test_decisao_entrar_forjada_sem_vantagem_vira_aguardar():
-    r = _ranking([_linha("a", 70, 120)])   # 58% mas IC inclui o break-even
+    r = _ranking([_linha("a", 70, 120)])  # 58% mas IC inclui o break-even
     assert r["melhor"] is None
     forjada = {"estado": "ENTRAR", "dir": "CALL", "estrategia": "a", "nome": "A", "titulo": "ENTRAR"}
     v = veredito.montar(forjada, r)
@@ -67,7 +85,7 @@ def test_decisao_entrar_forjada_sem_vantagem_vira_aguardar():
 
 
 def test_poucas_operacoes_nunca_comprova_mesmo_com_acerto_alto():
-    r = _ranking([_linha("a", 80, 99)])    # 81% em 99 ops: abaixo do mínimo
+    r = _ranking([_linha("a", 80, 99)])  # 81% em 99 ops: abaixo do mínimo
     assert r["melhor"] is None
     v = veredito.montar(sinal.decidir(r, {"a": "CALL"}, {}), r)
     assert v["estado"] == "AGUARDAR"
@@ -94,8 +112,12 @@ def test_motivo_do_aguardar_usa_o_mercado():
 
 def test_veredito_de_cada_estado_tem_titulo_e_frase():
     r = _ranking([_linha("a", 200, 320), _linha("b", 80, 140)])
-    casos = {"ENTRAR": ({"a": "CALL"}, {}), "CONFLITO": ({"a": "CALL", "b": "PUT"}, {}),
-             "PREPARANDO": ({}, {"a": "PUT"}), "AGUARDAR": ({}, {})}
+    casos = {
+        "ENTRAR": ({"a": "CALL"}, {}),
+        "CONFLITO": ({"a": "CALL", "b": "PUT"}, {}),
+        "PREPARANDO": ({}, {"a": "PUT"}),
+        "AGUARDAR": ({}, {}),
+    }
     for esperado, (s, p) in casos.items():
         v = veredito.montar(sinal.decidir(r, s, p), r)
         assert v["estado"] == esperado and v["titulo"] and v["frase"]
@@ -143,6 +165,7 @@ def test_selos():
 
 def test_ranking_real_tem_selo_em_todas_as_linhas(aleatorio):
     from binarias.backtest import ConfigBacktest
+
     r = rk.calcular_ranking(aleatorio, ConfigBacktest())
     assert all(l["selo"]["texto"] in rk.SELOS.values() for l in r["linhas"])
 
@@ -162,6 +185,7 @@ def test_mercado_humano_sem_jargao():
 
 def test_top3_tem_spark_e_porque():
     from binarias.backtest import ConfigBacktest
+
     r = scanner.avaliar_ativo("X", df_aleatorio(700, seed=5), ConfigBacktest(), aberto=True)
     assert len(r["spark"]) == scanner.N_SPARK and r["porque"]
     assert "ADX" not in r["porque"] and "ATR" not in r["porque"]
@@ -171,8 +195,13 @@ def test_top3_tem_spark_e_porque():
 
 # --------------------------------------------------------------------------- demonstração
 def test_cenarios_de_demonstracao_forcam_cada_estado():
-    esperado = {"entrar": "ENTRAR", "preparando": "PREPARANDO", "aguardar": "AGUARDAR",
-                "conflito": "CONFLITO", "observacao": "OBSERVACAO"}
+    esperado = {
+        "entrar": "ENTRAR",
+        "preparando": "PREPARANDO",
+        "aguardar": "AGUARDAR",
+        "conflito": "CONFLITO",
+        "observacao": "OBSERVACAO",
+    }
     for cenario, estado in esperado.items():
         msgs = demo.mensagens(cenario)
         tipos = [m["tipo"] for m in msgs]
@@ -188,14 +217,17 @@ PROIBIDOS = [r"garantid", r"88\s*%", r"vai ganhar", r"lucro certo", r"sem risco"
 
 
 def test_interface_nao_promete_resultado():
-    arquivos = [os.path.join(RAIZ, "static", f) for f in os.listdir(os.path.join(RAIZ, "static"))
-                if f.endswith((".html", ".js", ".css"))]
+    arquivos = [
+        os.path.join(RAIZ, "static", f)
+        for f in os.listdir(os.path.join(RAIZ, "static"))
+        if f.endswith((".html", ".js", ".css"))
+    ]
     assert arquivos
     for caminho in arquivos:
-        texto = open(caminho, encoding="utf-8").read().lower()
+        texto = Path(caminho).read_text(encoding="utf-8").lower()
         for padrao in PROIBIDOS:
             if caminho.endswith(".css") and padrao[0].isdigit():
-                continue   # no CSS, "88%" é cor/tamanho, não texto da tela
+                continue  # no CSS, "88%" é cor/tamanho, não texto da tela
             assert not re.search(padrao, texto), f"'{padrao}' em {caminho}"
     # e nos textos que o servidor gera para a tela
     for cenario in demo.CENARIOS:
@@ -205,5 +237,5 @@ def test_interface_nao_promete_resultado():
 
 
 def test_aviso_de_risco_sempre_presente():
-    html = open(os.path.join(RAIZ, "static", "index.html"), encoding="utf-8").read()
+    html = Path(RAIZ, "static", "index.html").read_text(encoding="utf-8")
     assert "Nenhum sinal é garantia" in html and "perda total" in html

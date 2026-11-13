@@ -1,10 +1,12 @@
 """Integração: sessão ao vivo completa (ativo + scanner) contra o Deriv falso."""
-import asyncio
+
 import json
 
-from binarias import hub as hubmod, sessao as sessmod
 from fake_deriv import FakeDeriv
 from test_hub_scanner import _esperar, rodar
+
+from binarias import hub as hubmod
+from binarias import sessao as sessmod
 
 
 class NavFalso:
@@ -25,7 +27,7 @@ def test_csv_com_cabecalho_antigo_e_preservado(monkeypatch, tmp_path):
     caminho = tmp_path / "sinais.csv"
     caminho.write_text("data_sinal,data_entrada,ativo\n2026-01-01,2026-01-01,X\n", encoding="utf-8-sig")
     monkeypatch.setattr(sessmod, "CSV_SINAIS", str(caminho))
-    sessmod.gravar_csv({c: "v" for c in sessmod.COLUNAS_CSV})
+    sessmod.gravar_csv(dict.fromkeys(sessmod.COLUNAS_CSV, "v"))
     antigos = list(tmp_path.glob("sinais_antigo_*.csv"))
     assert len(antigos) == 1 and "X" in antigos[0].read_text(encoding="utf-8-sig")
     assert caminho.read_text(encoding="utf-8-sig").splitlines()[0] == ",".join(sessmod.COLUNAS_CSV)
@@ -45,8 +47,10 @@ def test_sessao_ao_vivo_completa(monkeypatch, tmp_path):
             s = sessmod.Sessao(nav, h)
             try:
                 await s.iniciar("frxEURUSD", "M1", 1, 0.85)
-                await _esperar(lambda: {"historico", "ranking", "analise", "decisao", "estado", "top3", "conexao"}
-                               <= nav.tipos(), timeout=20)
+                await _esperar(
+                    lambda: {"historico", "ranking", "analise", "decisao", "estado", "top3", "conexao"} <= nav.tipos(),
+                    timeout=20,
+                )
                 assert fake.conexoes == 1, "tudo numa conexão só"
                 assert fake.contar(ticks_history="frxEURUSD", subscribe=1) == 1, "série reaproveitada pelo scanner"
                 hist = nav.ultimo("historico")
@@ -66,8 +70,8 @@ def test_sessao_ao_vivo_completa(monkeypatch, tmp_path):
                         serie = next(sv for (sim, _), sv in h.series.items() if sim == x["simbolo"])
                         fechadas, _ = s._velas(serie)
                         closes = [float(v) for v in fechadas["close"].tail(len(x["spark"]) + 5)]
-                        n = len(x["spark"])   # trecho contínuo (uma vela pode ter fechado depois da mensagem)
-                        assert any(closes[i:i + n] == x["spark"] for i in range(len(closes) - n + 1))
+                        n = len(x["spark"])  # trecho contínuo (uma vela pode ter fechado depois da mensagem)
+                        assert any(closes[i : i + n] == x["spark"] for i in range(len(closes) - n + 1))
                 sparks = [tuple(x["spark"]) for x in top["todos"] if x["spark"]]
                 assert len(sparks) >= 2 and len(set(sparks)) == len(sparks), "mini gráficos idênticos"
                 # veredito em linguagem simples, em toda mensagem de estado e de decisão
@@ -86,6 +90,7 @@ def test_sessao_ao_vivo_completa(monkeypatch, tmp_path):
             finally:
                 await s.parar()
             assert all(x.refs == 0 for x in h.series.values())
-            await _esperar(lambda: not h.series, timeout=5)   # assinaturas canceladas
+            await _esperar(lambda: not h.series, timeout=5)  # assinaturas canceladas
             await h.fechar()
+
     rodar(cenario(), timeout=60)

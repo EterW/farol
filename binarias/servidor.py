@@ -1,4 +1,5 @@
 """Servidor do modo ao vivo (FastAPI + WebSocket) com UMA conexão compartilhada com a Deriv."""
+
 import argparse
 import os
 import re
@@ -11,9 +12,26 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import avisos, demo, mercado, progresso, scanner
-from .config import (ATIVOS_SCANNER, EXPIRACAO_PADRAO, JANELA_RANKING, MIN_OPERACOES, MIN_OPS_AMOSTRA,
-                     N_HISTORICO, PASTA_STATIC, PAYOUT_PADRAO, PROGRESSO_LIMITE, PROGRESSO_LIMITE_MAX,
-                     PROGRESSO_LIMITE_MIN, TIMEFRAMES_PRONTOS)
+from .config import (
+    ATIVOS_SCANNER,
+    EXPIRACAO_MAX,
+    EXPIRACAO_PADRAO,
+    HOST_PADRAO,
+    JANELA_RANKING,
+    MIN_OPERACOES,
+    MIN_OPS_AMOSTRA,
+    N_HISTORICO,
+    PASTA_STATIC,
+    PAYOUT_MAX,
+    PAYOUT_MIN,
+    PAYOUT_PADRAO,
+    PORTA_PADRAO,
+    PROGRESSO_LIMITE,
+    PROGRESSO_LIMITE_MAX,
+    PROGRESSO_LIMITE_MIN,
+    TIMEFRAME_MAX,
+    TIMEFRAMES_PRONTOS,
+)
 from .estrategias import ESTRATEGIAS, EXPLICACAO
 from .hub import DerivHub
 from .log import configurar_log, obter
@@ -24,9 +42,6 @@ log = obter("servidor")
 hub = DerivHub()
 
 SIMBOLO_VALIDO = re.compile(r"^[A-Za-z0-9_]{1,40}$")
-EXPIRACAO_MAX = 60            # velas
-PAYOUT_MIN, PAYOUT_MAX = 1.0, 500.0   # em %
-TIMEFRAME_MAX = 86400         # D1
 
 
 def validar_assinatura(msg: dict) -> dict:
@@ -51,6 +66,7 @@ def validar_assinatura(msg: dict) -> dict:
 
 @asynccontextmanager
 async def ciclo(_app):
+    """Liga a conexão com a Deriv ao subir o servidor e a desliga ao encerrar."""
     hub.iniciar()
     yield
     await hub.fechar()
@@ -62,16 +78,19 @@ app.mount("/static", StaticFiles(directory=PASTA_STATIC), name="static")
 
 @app.get("/")
 async def pagina():
+    """Página principal."""
     return FileResponse(os.path.join(PASTA_STATIC, "index.html"))
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
+    """Ícone da aba do navegador."""
     return FileResponse(os.path.join(PASTA_STATIC, "marca", "favicon.ico"))
 
 
 @app.get("/api/config")
 async def api_config():
+    """Configuração e textos de regra usados pela página."""
     return {
         "timeframes": TIMEFRAMES_PRONTOS,
         "csv": CSV_SINAIS,
@@ -87,14 +106,23 @@ async def api_config():
         "scanner": ATIVOS_SCANNER,
         "criterio_mercado": mercado.CRITERIO,
         "regra_scanner": scanner.REGRA,
-        "estrategias": [{"id": e.id, "nome": e.nome, "descricao": e.descricao, "sigla": e.sigla,
-                         "simples": EXPLICACAO.get(e.id, e.descricao),
-                         "parametros": e.parametros} for e in ESTRATEGIAS],
+        "estrategias": [
+            {
+                "id": e.id,
+                "nome": e.nome,
+                "descricao": e.descricao,
+                "sigla": e.sigla,
+                "simples": EXPLICACAO.get(e.id, e.descricao),
+                "parametros": e.parametros,
+            }
+            for e in ESTRATEGIAS
+        ],
     }
 
 
 @app.get("/api/ativos")
 async def api_ativos():
+    """Ativos disponíveis na Deriv."""
     try:
         return await hub.ativos()
     except Exception as e:  # noqa: BLE001 - qualquer falha vira 502 com a mensagem, e fica no log
@@ -118,13 +146,27 @@ async def api_avisos_teste():
 
 @app.get("/api/status")
 async def api_status():
-    return {**hub.status, "series": [{"simbolo": s.simbolo, "gran": s.gran, "refs": s.refs, "velas": len(s.velas),
-                                      "assinada": bool(s.sub_id), "fechado": s.mercado_fechado, "erro": s.erro}
-                                     for s in hub.series.values()]}
+    """Diagnóstico da conexão e das séries assinadas."""
+    return {
+        **hub.status,
+        "series": [
+            {
+                "simbolo": s.simbolo,
+                "gran": s.gran,
+                "refs": s.refs,
+                "velas": len(s.velas),
+                "assinada": bool(s.sub_id),
+                "fechado": s.mercado_fechado,
+                "erro": s.erro,
+            }
+            for s in hub.series.values()
+        ],
+    }
 
 
 @app.websocket("/ws")
 async def ws_navegador(ws: WebSocket):
+    """Canal ao vivo com uma aba: recebe pedidos validados e envia velas, veredito e avisos."""
     await ws.accept()
     sessao = Sessao(ws, hub)
     try:
@@ -150,26 +192,38 @@ async def ws_navegador(ws: WebSocket):
                 await sessao.status("Desconectado.")
     except (WebSocketDisconnect, NavegadorFechado):
         pass
-    except Exception:  # noqa: BLE001 - erro inesperado numa aba não pode derrubar o servidor
+    except Exception:
         log.exception("Erro na conexão com o navegador")
     finally:
         sessao.fechado = True
         await sessao.parar()
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Modo ao vivo (site local)")
-    ap.add_argument("--porta", type=int, default=8000)
-    ap.add_argument("--host", default="127.0.0.1")
+def main() -> None:
+    """Ponto de entrada (python live.py): sobe o site local e abre o navegador."""
+    ap = argparse.ArgumentParser(description="Farol · modo ao vivo (site local)")
+    ap.add_argument("--porta", type=int, default=PORTA_PADRAO)
+    ap.add_argument("--host", default=HOST_PADRAO, help="padrão 127.0.0.1 (só esta máquina)")
     ap.add_argument("--sem-navegador", action="store_true", help="não abrir o navegador automaticamente")
     args = ap.parse_args()
 
     import uvicorn
+
     configurar_log()
+    local = args.host in ("127.0.0.1", "localhost", "::1")
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.porta}"
-    print(f"\nModo ao vivo em {url}  (Ctrl+C para sair)")
+    print(f"\nFarol · sinais com evidência estatística, sem promessa\nAberto em {url}  (Ctrl+C para sair)")
+    if not local:
+        print(f"ATENÇÃO: host {args.host} deixa o Farol acessível por outras máquinas da rede (não há senha).")
+        log.warning("Servidor exposto fora de 127.0.0.1 (host=%s)", args.host)
     print(f"Sinais registrados em: {CSV_SINAIS}")
     print("Erros registrados em: resultados/erros.log\n")
     if not args.sem_navegador:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=args.host, port=args.porta, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.porta, log_level="warning")
+    except OSError as e:  # ex.: porta em uso
+        log.error("Não foi possível abrir a porta %s: %s", args.porta, e)
+        print(f"Não foi possível abrir a porta {args.porta} ({e}). Tente: python live.py --porta 8080")
+        raise SystemExit(1) from None
+    print("Farol encerrado.")

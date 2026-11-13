@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import df_aleatorio, df_de_cores, df_de_ohlc
 
 from binarias import estrategias as E
-from conftest import df_aleatorio, df_de_cores, df_de_ohlc
 
 ESTS = E.ESTRATEGIAS
 IDS = [e.id for e in ESTS]
@@ -38,6 +38,7 @@ def test_sinal_eh_exatamente_todas_as_condicoes(est):
 def test_estrategia_sem_condicoes_usa_o_sinal():
     def so_verde(df):
         return E._sinais(df["close"] > df["open"], df["close"] < df["open"])
+
     est = E.Estrategia("Só verde", "SV", so_verde)
     df = df_aleatorio(100, seed=2)
     (c,) = est.gerar_condicoes(df)
@@ -71,9 +72,11 @@ def _lista(s):
 
 def test_detector_de_lookahead_funciona():
     """Uma estratégia 'trapaceira' (usa a vela seguinte) precisa ser pega pelo teste acima."""
+
     def trapaca(df):
         prox = df["close"].shift(-1)
         return E._sinais(prox > df["close"], prox < df["close"])
+
     df = df_aleatorio(300, seed=1)
     assert not _igual(trapaca(df.iloc[:200]), trapaca(df).iloc[:200])
 
@@ -95,13 +98,13 @@ def test_reversao_sequencia():
     assert s[2] == "PUT" and s[5] == "CALL"
     assert s.drop([2, 5]).isna().all()
     conds = E.reversao_sequencia_condicoes(df, n=3)
-    assert [bool(c.put.iat[1]) for c in conds] == [True, True, False]   # 2 de 3 verdes: falta uma
+    assert [bool(c.put.iat[1]) for c in conds] == [True, True, False]  # 2 de 3 verdes: falta uma
     assert [c.texto_put for c in conds] == ["Vela atual verde", "Vela anterior verde", "Vela de 2 atrás verde"]
 
 
 def test_cruzamento_nao_dispara_quando_medias_ficam_iguais():
     subida = list(np.linspace(100, 104, 40))
-    plano = [subida[-1]] * 30          # depois de 20 velas planas as médias ficam IGUAIS
+    plano = [subida[-1]] * 30  # depois de 20 velas planas as médias ficam IGUAIS
     queda = list(np.linspace(subida[-1] - 0.1, subida[-1] - 2, 10))
     fech = subida + plano + queda
     df = df_de_ohlc([(c, c + 0.01, c - 0.01, c) for c in fech])
@@ -132,9 +135,12 @@ def test_mhi_ignora_doji_e_buraco():
 
 
 def test_rompimento_e_rejeicao():
-    linhas = ([(100, 101, 99, 100)] * 25 + [(100, 103, 100, 102.5)]
-              + [(101, 103.5, 100.5, 102)]      # passa da máxima anterior (103) e fecha dentro
-              + [(100, 100.5, 98.5, 99.5)])     # passa da mínima anterior (99) e fecha dentro
+    linhas = (
+        [(100, 101, 99, 100)] * 25
+        + [(100, 103, 100, 102.5)]
+        + [(101, 103.5, 100.5, 102)]  # passa da máxima anterior (103) e fecha dentro
+        + [(100, 100.5, 98.5, 99.5)]
+    )  # passa da mínima anterior (99) e fecha dentro
     df = df_de_ohlc(linhas)
     assert E.rompimento_sr(df, n=20)[25] == "CALL"
     rej = E.rejeicao_sr(df, n=20)

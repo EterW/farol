@@ -1,16 +1,19 @@
 """Registro de erros em resultados/erros.log (rotativo) e no console."""
+
 import logging
 from logging.handlers import RotatingFileHandler
 
 from .config import ARQUIVO_LOG, garantir_pastas
 
+_configurado = False
 _FORMATO = "%(asctime)s %(levelname)-7s [%(name)s] %(message)s"
 
 
 def configurar_log(nivel_console: int = logging.WARNING) -> logging.Logger:
     """Chamado pelos pontos de entrada (main.py, live.py, validar.py). Idempotente."""
+    global _configurado
     raiz = logging.getLogger("binarias")
-    if getattr(raiz, "_configurado", False):
+    if _configurado:
         return raiz
     garantir_pastas()
     raiz.setLevel(logging.INFO)
@@ -22,9 +25,10 @@ def configurar_log(nivel_console: int = logging.WARNING) -> logging.Logger:
     console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     raiz.addHandler(arquivo)
     raiz.addHandler(console)
-    raiz._configurado = True
+    _configurado = True
     return raiz
 
 
 def obter(nome: str) -> logging.Logger:
+    """Logger do módulo, sob o logger raiz 'binarias'."""
     return logging.getLogger(f"binarias.{nome}")

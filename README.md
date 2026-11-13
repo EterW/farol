@@ -1,158 +1,183 @@
-# Backtest de Opções Binárias — Deriv
+# Farol
 
-Backtest, ranking estatístico, validação walk-forward e modo ao vivo (site local) para estratégias
-CALL/PUT com dados públicos da Deriv. **O mesmo código das estratégias roda no backtest, no ranking,
-na validação e no ao vivo.**
+**Sinais com evidência estatística, sem promessa.**
 
-> Aviso honesto: na última validação (4 pares Forex, 20000 velas M5, payout 85%) **nenhuma estratégia
-> passou**. A ferramenta foi feita para dizer "sem vantagem comprovada" quando os dados não comprovam
-> nada, e não para prometer assertividade.
+O Farol é uma ferramenta local de estudo para opções binárias (CALL/PUT) com dados públicos da Deriv:
+backtest, ranking estatístico, validação walk-forward e um modo ao vivo no navegador. Ele só sugere
+entrada quando a estratégia **líder** tem vantagem comprovada no histórico recente. Quando os dados não
+comprovam nada, ele diz isso e fica em silêncio.
 
-## Instalação (Windows / PowerShell)
+> **Aviso honesto.** Na última validação (4 pares Forex, 20.000 velas M5, payout 85%) **nenhuma estratégia
+> passou**. Toda probabilidade mostrada é *estimada* a partir do passado, com margem de erro. Nenhum sinal é
+> garantia; opções binárias podem causar perda total do valor investido.
+
+---
+
+## Instalar (Windows / PowerShell)
+
 ```powershell
 cd C:\Users\Win11\backtest-binarias
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements.txt          # só o necessário para rodar
+pip install -e ".[dev]"                  # opcional: testes, ruff, mypy, playwright (screenshots)
 ```
+
 Requer Python 3.10+ (testado com 3.12).
 
-## Comandos
+## Rodar
+
 | Comando | O que faz |
 |---|---|
-| `python main.py` | Menu: baixar velas, backtest, ranking, validação |
 | `python live.py` | Modo ao vivo em http://127.0.0.1:8000 (abre o navegador) |
+| `python live.py --porta 8080 --sem-navegador` | Outra porta, sem abrir o navegador |
+| `python main.py` | Menu no terminal: baixar velas, backtest, ranking, validação |
 | `python validar.py` | Validação completa (download + comparativo + walk-forward + relatório) |
-| `python -m pytest` | Testes automáticos (estratégias, motor, ranking, hub, sessão, validação) |
 
-### Menu (`python main.py`)
-1. **Baixar velas**: mercado → ativo → tempo gráfico (M1…D1 ou personalizado, ex.: M7, M20, H6) → quantidade.
-2. **Backtest**: uma estratégia (com parâmetros) ou TODAS; expiração, payout, entrada, gales, banca, empate.
-3. **Listar CSVs**.
-4. **Ranking**: janela recente × histórico com IC de Wilson 95% (veja abaixo).
-5. **Validação walk-forward** (o mesmo que `python validar.py`).
+Atalhos do modo ao vivo: `/?auto` conecta direto com a última escolha; `/?demo=entrar` (ou `preparando`,
+`aguardar`, `conflito`, `observacao`) mostra uma **demonstração com dados simulados**, que passa pelas mesmas
+funções do ao vivo e exibe uma faixa de aviso.
 
-### Modo ao vivo (`python live.py`)
+O servidor escuta só em `127.0.0.1` por padrão. Com `--host 0.0.0.0` ele fica acessível na rede **sem senha**
+(o terminal avisa). `Ctrl+C` encerra de forma limpa (fecha a conexão com a Deriv e registra operações abertas
+como `CANCELADO`).
+
+## Testar
+
 ```powershell
-python live.py                          # abre o navegador
-python live.py --porta 8080 --sem-navegador
+python -m pytest                     # 160+ testes (estratégias, motor, ranking, líder, avisos, hub, sessão...)
+python -m ruff check . ; python -m ruff format --check .
+python -m mypy                       # checagem de tipos leve (pandas/numpy tratados como Any)
+python live.py --porta 8765 --sem-navegador   # e, em outro terminal:
+python tests/telas.py                # screenshots 1440/1920/390 dos 5 estados + checagens visuais
 ```
-`http://127.0.0.1:8000/?auto` conecta direto com a última escolha. Informe **Payout %**: ele define o break-even.
 
-**Interface do Farol** (`static/index.html`, `static/app.css`, `static/app.js`; paleta e fontes só em `static/tema.css`):
-- **Veredito** no topo, em português simples: `ENTRAR AGORA` (▲ COMPRA / ▼ VENDA), `SE PREPARANDO`, `AGUARDAR`
-  (com o motivo), `CONFLITO, NÃO ENTRAR` e `MODO OBSERVAÇÃO` (melhor candidata, rotulada “NÃO COMPROVADA”, sem som).
-  Sempre com probabilidade **estimada**, faixa de incerteza (Wilson 95%), nº de operações e break-even. A regra é
-  aplicada no servidor (`binarias/veredito.py`), nunca no navegador.
-- Modos **Simples** (padrão) e **Detalhado** (ranking visual, mercado em palavras simples, operações da sessão).
-- Tour de 4 passos na primeira visita (reabra no **?**), **Alertas** com volume e teste.
-- **Demonstração sem conexão**: `http://127.0.0.1:8000/?demo=entrar` (ou `preparando`, `aguardar`, `conflito`,
-  `observacao`). Dados simulados, com faixa de aviso, mas passando pelas mesmas funções do ao vivo.
-- Screenshots de revisão: `python tests/telas.py --url http://127.0.0.1:8000` → `resultados/telas/`
-  (requer `pip install playwright`; usa o Edge do Windows).
+`tests/telas.py` falha se houver erro no console, rolagem horizontal, texto visível menor que 12px, veredito
+fora da tela ao abrir ou se a barra compacta não aparecer ao rolar.
 
-Painéis (detalhes técnicos):
-- **Sinal principal**: vem **só** da estratégia nº 1 do ranking daquele ativo/timeframe.
-  - `SEM SINAL CONFIÁVEL NO MOMENTO`: nenhuma estratégia marcada tem vantagem comprovada. **Sem alerta de entrada.**
-  - `AGUARDANDO` / `SE PREPARANDO` (som de preparo) / `ENTRAR AGORA` (som de entrada, só em vela fechada).
-  - `CONFLITO, NÃO ENTRAR`: outra estratégia marcada com ≥ 30 operações e acerto acima do break-even
-    aponta o lado oposto.
-- **Análise de mercado**: tendência (preço × MM50 e inclinação da MM50 em ATRs), força (ADX 14),
-  volatilidade (percentil do ATR 14 nas últimas 500 velas), vela atual e resumo em texto. O critério aparece na tela.
-- **Top 3 ativos** (atualiza a cada vela fechada; clique para abrir): pontuação 0–100, com a regra visível na tela:
-  mercado aberto (obrigatório), volatilidade saudável (25), tendência clara (25) e estratégia com vantagem
-  comprovada (30 + até 20). Lista em `ATIVOS_SCANNER` (config ou variável de ambiente).
-- **Ranking de estratégias**: operações, acerto, IC 95%, lucro (janela e histórico carregado), força e vantagem.
-  Desmarcar uma estratégia tira ela da escolha da principal e do cálculo de conflito.
-- **Status da conexão** com a Deriv no topo (conectado / reconectando / reconexões).
-- **🔊 Testar alerta**: toca o som de preparo e o de entrada e envia uma notificação de teste (pede a permissão
-  se precisar). Toca mesmo com o som desligado e avisa se o som, o áudio ou as notificações estiverem bloqueados.
-- **👁 Modo observação** (desligado por padrão): quando **nenhuma** estratégia tem vantagem comprovada, o veredito
-  mostra a melhor candidata do momento (cinza, borda âmbar, fita “NÃO COMPROVADA · apenas observação, não é
-  recomendação”). Nunca toca som de entrada e não mexe no ENTRAR AGORA nem no CSV.
+---
 
-Cada sinal das estratégias marcadas vai para `resultados/sinais_ao_vivo.csv` depois da expiração
-(WIN/LOSS/EMPATE, ou CANCELADO se você trocar de ativo antes). A coluna `principal` marca o sinal do painel principal.
-Use esse arquivo para conferir, ao vivo, se o desempenho se mantém.
+## Regras de honestidade (valem em todo o código)
 
-**Conexão com a Deriv**: o servidor usa **uma única conexão** para tudo (abas abertas + scanner). Cada
-ativo é assinado uma vez só e compartilhado. A Deriv derruba a conexão pública a cada ~2 min, então o servidor
-reconecta, reassina e preenche as velas do intervalo. Há intervalo mínimo entre requisições e backoff
-exponencial em quedas repetidas e em `RateLimit`.
+1. **Vantagem comprovada** = na janela recente, **≥ 100 operações** (`MIN_OPERACOES`) **e** limite inferior do
+   **IC de Wilson 95%** do acerto **acima do break-even** `1 / (1 + payout)` (54,05% com payout 85%).
+   Sem isso: "sem sinal confiável" e **nenhum aviso de entrada**.
+2. **Uma estratégia líder** por ativo/tempo gráfico: a comprovada no topo do ranking. **Só ela** gera som e
+   notificação. Troca de líder com **histerese**: a nova precisa ficar no topo por 3 velas fechadas seguidas ou
+   ter o limite inferior do IC ≥ 2 p.p. maior; se a líder perder a vantagem, sai na hora.
+3. **Conflito bloqueia a entrada**: se outra estratégia relevante (≥ 30 operações e acerto acima do break-even)
+   aponta o lado oposto, a tela mostra `CONFLITO, NÃO ENTRAR` e nenhum aviso de entrada é enviado.
+4. **Ranking nunca pelo percentual bruto**: ordem por status (comprovada primeiro), depois pelo **limite
+   inferior do IC**, depois pelo nº de operações. Menos de 30 operações = grupo "Poucos dados" (em cinza).
+5. Probabilidade sempre **estimada**, com faixa, nº de operações e break-even. Sem martingale no ranking.
+   Nenhum texto promete lucro, "assertividade" ou percentuais mágicos (há teste automático para isso).
+6. Tudo isso é decidido **no servidor** (`binarias/`), testável; o navegador só desenha e toca o que recebe.
 
-### Validação (`python validar.py`)
-```powershell
-python validar.py                                   # 20000 velas M5 de EURUSD, GBPUSD, USDJPY, AUDUSD
-python validar.py --usar-cache                      # reaproveita data/*_M5_20000.csv
-python validar.py --payout 80 --expiracao 2 --empate perde
-python validar.py --ativos frxEURUSD,frxGBPUSD --velas 5000 --treino 0.7 --min-ops 100
-```
-- **Comparativo**: todas as estratégias, parâmetros padrão, todos os pares → `resultados/validacao_comparativo.csv`.
-- **Walk-forward**: para cada estratégia e par, testa a grade de parâmetros **só nos 70% iniciais**
-  e escolhe pelo limite inferior do IC; depois aplica nos **30% finais**, que nunca foram vistos na escolha.
-  Treino e teste lado a lado → `resultados/validacao_walkforward.csv`.
-- **Relatório** → `resultados/validacao_relatorio.csv` e `.txt`: quais estratégias **passam em todos os pares**
-  (no teste: ≥ 100 operações e limite inferior do IC 95% acima do break-even). Se nenhuma passar, ele diz isso.
-  Também mostra o efeito de seleção: a melhor no treino e o que aconteceu com ela no teste.
+## Modo ao vivo: o que aparece na tela
 
-## Regras do ranking ("melhor do momento")
-- Janela recente configurável (padrão **500 velas**, `JANELA_RANKING`) e histórico completo (no ao vivo:
-  `N_HISTORICO` = 3000 velas carregadas).
-- Uma estratégia só é a melhor do momento se, **na janela**, tiver **≥ 100 operações** (`MIN_OPERACOES`) **E** o
-  **limite inferior do IC de Wilson 95%** do acerto ficar **acima do break-even** do payout: `1 / (1 + payout)`,
-  ou seja 54,05% com 85%. Caso contrário, aparece **"sem vantagem comprovada"**.
-- **Força**: a janela é comparada com o histórico anterior a ela (teste z de duas proporções, 5% unilateral):
-  "perdendo força", "ganhando força", "estável" ou "dados insuficientes" (< 30 operações em algum lado).
-- Sempre **sem gale**. Com 11 estratégias testadas, uma pode passar por sorte. Confirme com a validação.
+- **Veredito** (sempre visível; vira uma barra fixa ao rolar): `ENTRAR AGORA` (▲ COMPRA / ▼ VENDA, com o tempo
+  restante para entrar), `SE PREPARANDO`, `AGUARDAR` (com o motivo), `CONFLITO, NÃO ENTRAR` e `MODO OBSERVAÇÃO`
+  (melhor candidata, rotulada "NÃO COMPROVADA", silenciosa).
+- **Progresso de formação (0–100%)** da líder: `60% × condições cumpridas + 40% × proximidade do gatilho`, onde a
+  proximidade mede quanto o fechamento da vela atual precisaria andar, em ATR, para todas as condições valerem
+  (1 ATR ou mais = 0). As condições são exatamente as que geram o sinal. O "?" na tela explica a conta.
+- **Avisos** (som + notificação, só da líder), em 3 momentos:
+  1. *Formando*: "Farol: [estratégia] está se formando em [ativo]. Fique atento: o sinal pode sair na próxima vela."
+     Uma vez por vela, quando o progresso passa do limite (padrão 70%, ajustável em **Alertas**).
+  2. *Entrar agora*: "Entre AGORA: COMPRA ▲ em [ativo], expiração N vela(s). Probabilidade estimada X% (entre A% e
+     B%, N operações)." Som diferente para compra e venda.
+  3. *Resultado*: WIN/LOSS/EMPATE e o placar da sessão.
+  Opção separada e **desligada por padrão**: "avisar também candidatas não comprovadas (só observação)", com som e
+  título próprios ("OBSERVAÇÃO, sem vantagem comprovada"). **Testar alertas** dispara os 3 tipos com os textos reais.
+- **Gráfico** (Lightweight Charts™ da TradingView): por padrão só a entrada avisada (★) e os sinais da líder.
+  "Mostrar todos os sinais" agrupa por vela (uma seta com "×N"; a lista aparece no tooltip).
+- **Top 3 ativos**: nota contínua de 0 a 100 (movimento, tendência, estratégia comprovada), desempate explícito e
+  o motivo de cada parte da nota. Clique para abrir o ativo.
+- **Detalhado**: ranking em grupos (recente × histórico), mercado em palavras simples com o resumo técnico
+  explicado, e as operações da sessão.
+- **Letra P/M/G** e modo Simples/Detalhado ficam salvos no navegador.
 
-## Regras do backtest
-- Sinal no fechamento da vela *i* → entrada na **abertura da vela i+1** → expiração no fechamento da vela
-  *i+expiração*. Operações que não terminam dentro dos dados são descartadas.
-- Não abre nova operação com uma em andamento (gales incluídos). Um novo sinal pode sair no fechamento da
-  vela de expiração. O modo ao vivo segue a mesma regra.
-- **Empate** (saída = entrada): `devolve` (padrão) ou `perde` (regra Rise/Fall da Deriv). No menu, pergunte;
-  na validação use `--empate perde`; no ao vivo defina a variável de ambiente `EMPATE=perde`.
-- Limitações: o preço real de entrada é o próximo tick após a ordem (atraso/slippage não modelados); o
-  modo ao vivo não faz martingale.
+Cada sinal das estratégias marcadas vai para `resultados/sinais_ao_vivo.csv` após a expiração (WIN, LOSS, EMPATE
+ou CANCELADO). A coluna `principal` marca as entradas avisadas.
+
+## Ranking, backtest e validação
+
+- **Janela recente**: 1.500 velas (`JANELA_RANKING`); **histórico**: 3.000 velas carregadas (`N_HISTORICO`).
+  Com 500 velas, só ~2 das 11 estratégias chegavam a 100 operações (medido em R_100 M1 e EUR/USD M5), o que tornava
+  a regra quase impossível de cumprir. A regra de 100 operações **não foi relaxada**.
+- **Força**: janela × histórico anterior a ela (teste z de duas proporções, 5% unilateral).
+- **Backtest**: sinal no fechamento da vela *i* → entrada na abertura da vela *i+1* → expiração no fechamento da
+  vela *i+expiração*. Sem operações sobrepostas. Empate: `devolve` (padrão) ou `perde` (`EMPATE=perde`).
+- **Validação** (`python validar.py`): escolhe parâmetros só nos 70% iniciais e mede nos 30% finais nunca vistos.
+  Passa = em **todos** os pares, ≥ 100 operações e limite inferior do IC acima do break-even.
 
 ## Estrutura
+
 ```
-main.py            Menu no terminal
-live.py            Modo ao vivo (site local)
-validar.py         Validação walk-forward
+live.py                 Modo ao vivo (site local)
+main.py                 Menu no terminal
+validar.py              Validação walk-forward
+pyproject.toml          Metadados, dependências e configuração de ruff, pytest e mypy
 binarias/
-  config.py        Todas as configurações (payout, janela, ativos do scanner, pastas...)
-  log.py           Log de erros em resultados/erros.log
-  timeframes.py    Parsing de timeframe e agregação de velas (igual no backtest e ao vivo)
-  deriv.py         Cliente da Deriv para scripts (paginação, reconexão, backoff)
-  hub.py           Conexão única compartilhada do modo ao vivo
-  dados.py         Download e CSV
-  indicadores.py   RSI, ATR, ADX, Bollinger, médias (todos causais)
-  estrategias.py   Estratégias + preparo + grades de parâmetros
-  backtest.py      Motor de backtest e regra de resultado (resolver)
-  estatistica.py   Wilson, break-even, teste z
-  ranking.py       Ranking honesto
-  mercado.py       Análise de mercado
-  scanner.py       Pontuação do Top 3
-  sinal.py         Decisão do sinal único
-  validacao.py     Comparativo + walk-forward + relatório
-  sessao.py        Lógica de uma aba do modo ao vivo
-  servidor.py      FastAPI
-static/index.html  Página do modo ao vivo
-tests/             Testes automáticos (inclui um servidor Deriv falso)
-data/              CSVs baixados (ATIVO_TEMPO.csv)
-resultados/        Backtests, rankings, validação, sinais_ao_vivo.csv, erros.log
+  config.py             TODAS as configurações (janelas, mínimos, limites, pesos, conexão, pastas)
+  estrategias.py        11 estratégias descritas por condições nomeadas (sinal = todas cumpridas)
+  progresso.py          Progresso de formação (condições + distância ao gatilho em ATR)
+  avisos.py             Estratégia líder com histerese e motor de avisos (formando/entrar/resultado)
+  sinal.py              Decisão técnica (ENTRAR, PREPARANDO, CONFLITO...) a partir da líder
+  veredito.py           Tradução para português simples, com a regra de honestidade reconferida
+  ranking.py            Ranking honesto (Wilson, break-even, ordem por status e limite inferior)
+  backtest.py           Motor de backtest e regra de resultado (a mesma do ao vivo)
+  estatistica.py        Wilson, break-even, teste z
+  indicadores.py        RSI, ATR, ADX, Bollinger, médias (todos causais)
+  mercado.py            Análise de mercado com critério explícito
+  scanner.py            Nota do Top 3
+  timeframes.py         Timeframes e agregação de velas (igual no backtest e ao vivo)
+  deriv.py / hub.py     Cliente para scripts / conexão única compartilhada do ao vivo
+  dados.py              Download e CSV
+  sessao.py             Uma aba do modo ao vivo
+  servidor.py           FastAPI + WebSocket (valida toda entrada)
+  demo.py               Cenários simulados da demonstração
+  validacao.py          Comparativo, walk-forward e relatório
+  log.py                Log em resultados/erros.log
+static/                 index.html, app.js, app.css, tema.css (paleta e fontes) e marca/ (logo e ícones)
+ferramentas/            gerar_marca.py (regera a logo, favicon e ícones)
+tests/                  Testes automáticos (com um servidor Deriv falso) e telas.py (screenshots)
+data/, resultados/      CSVs baixados e saídas (fora do git)
 ```
 
 ## Criar sua estratégia
-Em `binarias/estrategias.py`, escreva `minha(df, param=10)` devolvendo uma Series com `"CALL"`, `"PUT"` ou
-`None` **usando só velas até a atual** (o teste `test_sem_lookahead` reprova quem olha o futuro). Opcionalmente,
-escreva `minha_prep(df, param=10)` para o estado "se preparando". Depois registre:
+
+Em `binarias/estrategias.py`, escreva as condições e o sinal, usando **só velas até a atual**:
+
 ```python
-Estrategia("Minha", "MINHA", minha, {"param": 10}, preparo=minha_prep, grade={"param": [5, 10, 20]}),
+def minha_condicoes(df, n=10):
+    alta = df["close"] > df["close"].shift(n)
+    return [_c(f"Fecha acima de {n} velas atrás", f"Fecha abaixo de {n} velas atrás", alta, ~alta)]
+
+
+def minha(df, n=10):
+    """Segue a direção das últimas N velas."""
+    return _de_condicoes(minha_condicoes(df, n))
+
+
+# registre em ESTRATEGIAS:
+Estrategia("Minha", "MINHA", minha, {"n": 10}, condicoes=minha_condicoes, grade={"n": [5, 10, 20]})
 ```
-Ela passa a valer automaticamente no backtest, no ranking, na validação e no ao vivo. Rode `python -m pytest`.
+
+Ela passa a valer no backtest, ranking, validação, progresso e ao vivo. `python -m pytest` reprova quem olha o
+futuro e confere que o sinal é exatamente "todas as condições cumpridas".
+
+## Limitações conhecidas
+
+- Entrada simulada na abertura da vela seguinte; atraso e slippage reais não são modelados.
+- Com 11 estratégias testadas, uma pode passar no critério por sorte (efeito de seleção). Use a validação.
+- A API pública da Deriv derruba a conexão a cada ~2 minutos; o servidor reconecta e preenche o buraco, mas
+  durante a reconexão os dados ficam alguns segundos atrasados.
+- Notificações do navegador dependem da permissão e do modo "Não perturbe" do sistema.
+- A marca (logo) é original; "Lightweight Charts" é marca da TradingView, usada conforme a licença (atribuição
+  mantida no gráfico).
 
 ## Endpoint
-API pública nova da Deriv: `wss://api.derivws.com/trading/v1/options/ws/public` (sem token). Ela devolve
-no máximo ~900 velas por requisição; o download pagina sozinho. Para trocar o endpoint, defina `DERIV_WS_URL`.
+
+API pública da Deriv: `wss://api.derivws.com/trading/v1/options/ws/public` (sem token, máx. ~900 velas por
+resposta; o download pagina sozinho). Para trocar, defina `DERIV_WS_URL`.

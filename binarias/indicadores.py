@@ -1,4 +1,5 @@
 """Indicadores técnicos (todos causais: o valor na vela i só usa velas <= i)."""
+
 import numpy as np
 import pandas as pd
 
@@ -9,6 +10,7 @@ def cor(df: pd.DataFrame) -> pd.Series:
 
 
 def sma(serie: pd.Series, periodo: int) -> pd.Series:
+    """Média móvel simples."""
     return serie.rolling(int(periodo)).mean()
 
 
@@ -28,9 +30,11 @@ def rsi(close: pd.Series, periodo: int) -> pd.Series:
 
 
 def true_range(df: pd.DataFrame) -> pd.Series:
+    """True range (amplitude real, considerando o fechamento anterior)."""
     fech_ant = df["close"].shift(1)
-    return pd.concat([df["high"] - df["low"], (df["high"] - fech_ant).abs(),
-                      (df["low"] - fech_ant).abs()], axis=1).max(axis=1)
+    return pd.concat([df["high"] - df["low"], (df["high"] - fech_ant).abs(), (df["low"] - fech_ant).abs()], axis=1).max(
+        axis=1
+    )
 
 
 def atr(df: pd.DataFrame, periodo: int = 14) -> pd.Series:

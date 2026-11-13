@@ -19,12 +19,13 @@ from playwright.sync_api import sync_playwright
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CENARIOS = ["entrar", "preparando", "aguardar", "conflito", "observacao"]
 TAMANHOS = {"1440": (1440, 900), "1920": (1920, 1080), "390": (390, 844)}
-MENOR_FONTE = 12   # px: legendas; texto de leitura usa 13px ou mais
+MENOR_FONTE = 12  # px: legendas; texto de leitura usa 13px ou mais
 
 JS_FONTES = """(minimo) => {
   const ruins = [];
   for (const e of document.querySelectorAll('body *')) {
-    if (!e.childNodes.length || ![...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) continue;
+    const temTexto = [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+    if (!temTexto) continue;
     const r = e.getBoundingClientRect(), st = getComputedStyle(e);
     if (!r.width || !r.height || st.visibility === 'hidden' || e.closest('[hidden], .tv-lightweight-charts')) continue;
     const px = parseFloat(st.fontSize);
@@ -47,13 +48,14 @@ def main():
     with sync_playwright() as p:
         try:
             nav = p.chromium.launch(channel="msedge")
-        except Exception:  # noqa: BLE001 - sem Edge, usa o Chromium do Playwright
+        except Exception:
             nav = p.chromium.launch()
         for nome in args.tamanhos.split(","):
             w, h = TAMANHOS[nome]
             celular = w < 800
-            ctx = nav.new_context(viewport={"width": w, "height": h}, device_scale_factor=2 if celular else 1,
-                                  reduced_motion="reduce")
+            ctx = nav.new_context(
+                viewport={"width": w, "height": h}, device_scale_factor=2 if celular else 1, reduced_motion="reduce"
+            )
             ctx.add_init_script("localStorage.setItem('tourVisto','true')")
             pg = ctx.new_page()
             pg.on("console", lambda m, n=nome: m.type == "error" and problemas.append(f"[{n}] console: {m.text}"))
@@ -71,8 +73,11 @@ def main():
                     for ruim in pg.evaluate(JS_FONTES, MENOR_FONTE):
                         problemas.append(f"{rotulo}: texto pequeno {ruim}")
                     base = os.path.join(args.pasta, f"{c}_{modo}_{nome}")
-                    pg.screenshot(path=base + "_dobra.png")             # o que se vê sem rolar
+                    pg.screenshot(path=base + "_dobra.png")  # o que se vê sem rolar
                     pg.screenshot(path=base + ".png", full_page=True)
+            # marca no cabeçalho (logo, nome e frase de posicionamento)
+            pg.goto(f"{args.url}/?demo=aguardar&tour=0", wait_until="networkidle")
+            pg.locator("#topo").screenshot(path=os.path.join(args.pasta, f"marca_topo_{nome}.png"))
             # barra compacta ao rolar + "mostrar todos os sinais" + letra G
             pg.goto(f"{args.url}/?demo=preparando&modo=detalhado&tour=0", wait_until="networkidle")
             pg.wait_for_timeout(700)
@@ -94,8 +99,9 @@ def main():
             pg.click(".grupo-letra button[data-letra='m']")
             ctx.close()
             # tour de primeira visita (contexto limpo) e diálogo de alertas
-            ctx = nav.new_context(viewport={"width": w, "height": h}, device_scale_factor=2 if celular else 1,
-                                  reduced_motion="reduce")
+            ctx = nav.new_context(
+                viewport={"width": w, "height": h}, device_scale_factor=2 if celular else 1, reduced_motion="reduce"
+            )
             pg = ctx.new_page()
             pg.on("pageerror", lambda e, n=nome: problemas.append(f"[{n}] erro: {e}"))
             pg.goto(f"{args.url}/?demo=entrar", wait_until="networkidle")

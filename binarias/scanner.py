@@ -13,18 +13,28 @@ cada componente é contínuo e o desempate é declarado:
 
 import pandas as pd
 
-from . import backtest as bt, mercado, ranking as rk
-from .config import JANELA_RANKING, MIN_OPERACOES, N_SPARK
+from . import backtest as bt
+from . import mercado
+from . import ranking as rk
+from .config import (
+    ADX_CHEIO,
+    ADX_ZERO,
+    FATOR_LATERAL,
+    JANELA_RANKING,
+    MIN_OPERACOES,
+    MIN_VELAS_RANKING,
+    MOV_IDEAL,
+    MOV_ZERO,
+    N_SPARK,
+    PONTOS_EST_BASE,
+    PONTOS_EST_BONUS,
+    PONTOS_MOV,
+    PONTOS_TEND,
+)
 from .log import obter
 
 log = obter("scanner")
 
-PONTOS_MOV, PONTOS_TEND, PONTOS_EST_BASE, PONTOS_EST_BONUS = 25, 25, 30, 20
-MOV_IDEAL = (35, 75)          # percentil do ATR com nota máxima
-MOV_ZERO = (5, 100)           # percentis em que a nota de movimento chega a 0
-ADX_ZERO, ADX_CHEIO = 15, 35
-FATOR_LATERAL = 0.4
-MIN_VELAS_RANKING = 60
 
 REGRA = [
     "Mercado precisa estar ABERTO (fechado = fora do ranking).",
@@ -41,6 +51,7 @@ REGRA = [
 
 
 def pontos_movimento(percentil: float) -> float:
+    """Nota de movimento (0..25) pelo percentil do tamanho das velas."""
     if MOV_IDEAL[0] <= percentil <= MOV_IDEAL[1]:
         return float(PONTOS_MOV)
     if percentil < MOV_IDEAL[0]:
@@ -49,6 +60,7 @@ def pontos_movimento(percentil: float) -> float:
 
 
 def pontos_tendencia(adx: float, tendencia: str) -> float:
+    """Nota de tendência (0..25) pela força do ADX; lateral vale menos."""
     base = PONTOS_TEND * min(1.0, max(0.0, (adx - ADX_ZERO) / (ADX_CHEIO - ADX_ZERO)))
     return base if tendencia != "LATERAL" else base * FATOR_LATERAL
 
@@ -89,11 +101,20 @@ def pontuar(analise: dict, ranking: dict | None, aberto: bool) -> dict:
     explicacao = [
         {"nome": "Movimento", "pontos": comp["volatilidade"], "max": PONTOS_MOV, "texto": _texto_movimento(p)},
         {"nome": "Tendência", "pontos": comp["tendencia"], "max": PONTOS_TEND, "texto": _texto_tendencia(adx, tend)},
-        {"nome": "Estratégia", "pontos": comp["estrategia"], "max": PONTOS_EST_BASE + PONTOS_EST_BONUS,
-         "texto": txt_est},
+        {
+            "nome": "Estratégia",
+            "pontos": comp["estrategia"],
+            "max": PONTOS_EST_BASE + PONTOS_EST_BONUS,
+            "texto": txt_est,
+        },
     ]
-    return {"pontos": round(sum(comp.values()), 1), "componentes": comp, "explicacao": explicacao,
-            "elegivel": True, "motivo": ""}
+    return {
+        "pontos": round(sum(comp.values()), 1),
+        "componentes": comp,
+        "explicacao": explicacao,
+        "elegivel": True,
+        "motivo": "",
+    }
 
 
 def porque(analise: dict, comp: dict, melhor: dict | None) -> str:
@@ -104,8 +125,10 @@ def porque(analise: dict, comp: dict, melhor: dict | None) -> str:
         return analise.get("motivo", "sem dados")
     partes = []
     if comp.get("tendencia", 0) >= 10 and analise["tendencia"] != "LATERAL":
-        partes.append(("subindo" if analise["tendencia"] == "ALTA" else "descendo")
-                      + (" com firmeza" if comp["tendencia"] >= 18 else ""))
+        partes.append(
+            ("subindo" if analise["tendencia"] == "ALTA" else "descendo")
+            + (" com firmeza" if comp["tendencia"] >= 18 else "")
+        )
     if comp.get("volatilidade", 0) >= PONTOS_MOV - 0.05:
         partes.append("movimento saudável")
     if not partes:
@@ -114,8 +137,14 @@ def porque(analise: dict, comp: dict, melhor: dict | None) -> str:
     return texto[0].upper() + texto[1:] + " · nenhuma estratégia comprovada"
 
 
-def avaliar_ativo(simbolo: str, df: pd.DataFrame, cfg: bt.ConfigBacktest, aberto: bool,
-                  janela: int = JANELA_RANKING, min_ops: int = MIN_OPERACOES) -> dict:
+def avaliar_ativo(
+    simbolo: str,
+    df: pd.DataFrame,
+    cfg: bt.ConfigBacktest,
+    aberto: bool,
+    janela: int = JANELA_RANKING,
+    min_ops: int = MIN_OPERACOES,
+) -> dict:
     """Análise + ranking + nota de UM ativo, usando só as velas FECHADAS desse ativo."""
     try:
         analise = mercado.analisar(df, nome=simbolo.removeprefix("frx"))
@@ -132,14 +161,25 @@ def montar_item(simbolo: str, df: pd.DataFrame, analise: dict, ranking: dict | N
     melhor = None
     if ranking and ranking["melhor"]:
         linha = next(x for x in ranking["linhas"] if x["id"] == ranking["melhor"])
-        melhor = {"id": linha["id"], "nome": linha["nome"], "acerto": linha["janela"]["acerto"],
-                  "ic_inf": linha["janela"]["ic_inf"], "operacoes": linha["janela"]["operacoes"]}
+        melhor = {
+            "id": linha["id"],
+            "nome": linha["nome"],
+            "acerto": linha["janela"]["acerto"],
+            "ic_inf": linha["janela"]["ic_inf"],
+            "operacoes": linha["janela"]["operacoes"],
+        }
     spark = [float(x) for x in df["close"].tail(N_SPARK)] if len(df) else []
     return {
-        "simbolo": simbolo, "aberto": aberto, **pts,
-        "tendencia": analise.get("tendencia"), "forca": analise.get("forca"), "adx": analise.get("adx"),
-        "atr_percentil": analise.get("atr_percentil"), "volatilidade": analise.get("volatilidade"),
-        "melhor_estrategia": melhor, "velas": int(len(df)),
+        "simbolo": simbolo,
+        "aberto": aberto,
+        **pts,
+        "tendencia": analise.get("tendencia"),
+        "forca": analise.get("forca"),
+        "adx": analise.get("adx"),
+        "atr_percentil": analise.get("atr_percentil"),
+        "volatilidade": analise.get("volatilidade"),
+        "melhor_estrategia": melhor,
+        "velas": len(df),
         "resumo": analise.get("resumo") or analise.get("motivo"),
         "porque": porque(analise, pts["componentes"], melhor) if pts["elegivel"] else pts["motivo"],
         "spark": spark,
@@ -150,7 +190,9 @@ def montar_item(simbolo: str, df: pd.DataFrame, analise: dict, ranking: dict | N
 
 def ordenar(resultados: list[dict]) -> list[dict]:
     """Elegíveis primeiro; nota; maior ADX; movimento mais perto do meio (55); nome."""
+
     def chave(r):
         meio = abs((r.get("atr_percentil") if r.get("atr_percentil") is not None else 55) - 55)
         return (not r["elegivel"], -r["pontos"], -(r.get("adx") or 0), meio, r["simbolo"])
+
     return sorted(resultados, key=chave)

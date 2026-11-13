@@ -1,10 +1,10 @@
 import numpy as np
-import pandas as pd
-
-from binarias import backtest as bt, validacao as val
-from binarias.estrategias import ESTRATEGIAS, POR_ID
 from conftest import df_aleatorio
 from test_ranking import _df_previsivel, _est, seguir
+
+from binarias import backtest as bt
+from binarias import validacao as val
+from binarias.estrategias import POR_ID
 
 
 def test_walk_forward_nao_olha_o_teste():

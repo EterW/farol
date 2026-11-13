@@ -1,8 +1,6 @@
-# Python 3.10 ou mais novo (testado com 3.12)
+# Farol: dependências para RODAR (Python 3.10+). Ferramentas de desenvolvimento: pip install -e ".[dev]"
 pandas>=2.2
 numpy>=1.26
 websockets>=14.0
 fastapi>=0.110
 uvicorn>=0.29
-# testes
-pytest>=8.0

@@ -7,24 +7,29 @@
   preenche o buraco de velas do período desconectado.
 * Backoff exponencial em quedas repetidas e em RateLimit.
 """
+
 import asyncio
+import contextlib
 import json
 import time
+from typing import Any
 
 import pandas as pd
 import websockets
 
-from .config import INTERVALO_MIN_REQUISICOES, WS_URL
+from .config import (
+    CONEXAO_ESTAVEL,
+    ESPERA_LIBERAR,
+    INTERVALO_MANUTENCAO,
+    INTERVALO_MIN_REQUISICOES,
+    MAX_CONTAGEM_ASSINATURA,
+    WS_URL,
+)
 from .deriv import ConexaoPerdida, DerivErro, backoff, baixar_historico, normalizar_ativo, vela_de_dict
 from .log import obter
 from .timeframes import COLUNAS
 
 log = obter("hub")
-
-MAX_CONTAGEM_ASSINATURA = 1000
-ESPERA_LIBERAR = 60.0          # s sem consumidores até cancelar a assinatura
-INTERVALO_MANUTENCAO = 300.0   # s: reassina mercados fechados, atualiza lista de ativos
-CONEXAO_ESTAVEL = 30.0         # s conectado para considerar a queda "normal" (reconecta sem espera)
 
 
 class SerieVelas:
@@ -38,7 +43,6 @@ class SerieVelas:
         self.sub_id: str | None = None
         self.mercado_fechado = False
         self.erro: str | None = None
-        self.ultimo_tick = 0.0
         self.pronta = asyncio.Event()
         self.refs = 0
         self.lock = asyncio.Lock()
@@ -46,17 +50,19 @@ class SerieVelas:
         self.liberacao: asyncio.TimerHandle | None = None
 
     def mesclar(self, velas) -> None:
+        """Acrescenta/atualiza velas, descartando artefatos desalinhados e o excesso antigo."""
         for v in velas:
             if int(v[0]) % self.gran:
                 continue  # artefato desalinhado
             self.velas[int(v[0])] = [float(v[1]), float(v[2]), float(v[3]), float(v[4])]
         excesso = len(self.velas) - (self.n_base + 200)
         if excesso > 0:
-            for t in sorted(self.velas)[:excesso + 100]:
+            for t in sorted(self.velas)[: excesso + 100]:
                 del self.velas[t]
         self.versao += 1
 
     def df(self) -> pd.DataFrame:
+        """Velas atuais como DataFrame ordenado."""
         if not self.velas:
             return pd.DataFrame(columns=COLUNAS)
         ts = sorted(self.velas)
@@ -64,39 +70,53 @@ class SerieVelas:
 
     @property
     def ultima_epoch(self) -> int | None:
+        """Abertura da vela mais recente (ou None)."""
         return max(self.velas) if self.velas else None
 
 
 class DerivHub:
+    """Conexão única com a Deriv, compartilhada por todas as abas e pelo scanner."""
+
     def __init__(self, url: str = WS_URL, intervalo: float = INTERVALO_MIN_REQUISICOES):
         self.url = url
         self.intervalo = intervalo
-        self.ws = None
+        self.ws: Any = None
         self._req = 0
         self._pend: dict[int, asyncio.Future] = {}
         self.series: dict[tuple[str, int], SerieVelas] = {}
         self.conectado = asyncio.Event()
         self.offset = 0.0
-        self.status = {"estado": "desconectado", "texto": "Desconectado", "desde": time.time(), "quedas": 0}
+        self.status: dict[str, Any] = {
+            "estado": "desconectado",
+            "texto": "Desconectado",
+            "desde": time.time(),
+            "quedas": 0,
+        }
         self._lock_envio = asyncio.Lock()
         self._ultimo_envio = 0.0
         self._tarefas: list[asyncio.Task] = []
-        self._ativos = {"t": 0.0, "lista": [], "abertos": {}}
-        self.conexoes_abertas = 0   # quantas vezes conectou (para testes/diagnóstico)
+        self._ativos: dict[str, Any] = {"t": 0.0, "lista": [], "abertos": {}}
+        self.conexoes_abertas = 0  # quantas vezes conectou (para testes/diagnóstico)
 
     # ------------------------------------------------------------------ ciclo de vida
     def iniciar(self) -> None:
+        """Começa o laço de conexão e a manutenção (idempotente)."""
         if not self._tarefas:
             self._tarefas = [asyncio.create_task(self._laco()), asyncio.create_task(self._manutencao())]
 
     async def fechar(self) -> None:
+        """Encerra as tarefas e a conexão (desligamento limpo)."""
         for t in self._tarefas:
             t.cancel()
-        for t in self._tarefas:
-            try:
+        cargas = [s.carregando for s in self.series.values() if s.carregando and not s.carregando.done()]
+        for s in self.series.values():  # downloads em andamento e liberações agendadas também param
+            if s.liberacao is not None:
+                s.liberacao.cancel()
+        for t in cargas:
+            t.cancel()
+        for t in [*self._tarefas, *cargas]:
+            with contextlib.suppress(asyncio.CancelledError):
                 await t
-            except (asyncio.CancelledError, Exception):
-                pass
         self._tarefas = []
         if self.ws is not None:
             await self.ws.close()
@@ -129,7 +149,7 @@ class DerivHub:
                         leitor.cancel()
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - o laço de conexão não pode morrer; tudo vai para o log
                 if not isinstance(e, (websockets.ConnectionClosed, ConexaoPerdida)):
                     log.warning("Conexão com a Deriv: %s: %s", type(e).__name__, e)
             finally:
@@ -172,11 +192,10 @@ class DerivHub:
 
     def _ao_ohlc(self, o: dict) -> None:
         try:
-            s = self.series.get((o.get("symbol"), int(o.get("granularity", 0))))
+            s = self.series.get((str(o.get("symbol")), int(o.get("granularity", 0))))
             if s is None:
                 return
             s.mesclar([[int(o["open_time"]), o["open"], o["high"], o["low"], o["close"]]])
-            s.ultimo_tick = time.time()
         except (KeyError, TypeError, ValueError):
             log.warning("Mensagem ohlc inesperada: %s", str(o)[:200])
 
@@ -198,14 +217,13 @@ class DerivHub:
                 await ws.send(json.dumps({**payload, "req_id": rid}))
             except websockets.ConnectionClosed:
                 self._pend.pop(rid, None)
-                raise ConexaoPerdida()
+                raise ConexaoPerdida() from None
         try:
             return await asyncio.wait_for(fut, timeout)
         finally:
             self._pend.pop(rid, None)
 
-    async def pedir(self, payload: dict, tentativas: int = 6, timeout: float = 30.0,
-                    reconectar: bool = True) -> dict:
+    async def pedir(self, payload: dict, tentativas: int = 6, timeout: float = 30.0, reconectar: bool = True) -> dict:
         """Envia e espera a resposta. Repete em queda de conexão (se `reconectar`) e em RateLimit."""
         ultimo = None
         for t in range(tentativas):
@@ -213,7 +231,7 @@ class DerivHub:
                 try:
                     await asyncio.wait_for(self.conectado.wait(), timeout=120)
                 except asyncio.TimeoutError:
-                    raise DerivErro("Sem conexão com a Deriv", "SemConexao")
+                    raise DerivErro("Sem conexão com a Deriv", "SemConexao") from None
             try:
                 resp = await self._pedir_uma(payload, timeout)
             except (ConexaoPerdida, asyncio.TimeoutError) as e:
@@ -241,6 +259,7 @@ class DerivHub:
 
     # ------------------------------------------------------------------ séries
     async def obter_serie(self, simbolo: str, gran: int, n_base: int) -> SerieVelas:
+        """Série compartilhada do ativo; cria e carrega na primeira vez."""
         chave = (simbolo, gran)
         s = self.series.get(chave)
         if s is None:
@@ -256,10 +275,12 @@ class DerivHub:
         return s
 
     def liberar(self, s: SerieVelas) -> None:
+        """Um consumidor a menos; sem consumidores, a assinatura é cancelada depois de um tempo."""
         s.refs -= 1
         if s.refs <= 0 and s.liberacao is None:
             s.liberacao = asyncio.get_running_loop().call_later(
-                ESPERA_LIBERAR, lambda: asyncio.create_task(self._remover(s)))
+                ESPERA_LIBERAR, lambda: asyncio.create_task(self._remover(s))
+            )
 
     async def _remover(self, s: SerieVelas) -> None:
         s.liberacao = None
@@ -269,10 +290,9 @@ class DerivHub:
         if s.carregando and not s.carregando.done():
             s.carregando.cancel()
         if s.sub_id and self.conectado.is_set():
-            try:
+            # se falhar, a Deriv descarta a assinatura sozinha na próxima queda de conexão
+            with contextlib.suppress(DerivErro, ConexaoPerdida, asyncio.TimeoutError):
                 await self.pedir({"forget": s.sub_id}, tentativas=1, reconectar=False)
-            except Exception:
-                pass
 
     async def _carregar(self, s: SerieVelas) -> None:
         try:
@@ -304,14 +324,27 @@ class DerivHub:
                 if faltam > MAX_CONTAGEM_ASSINATURA // 2:
                     # buraco grande (queda longa ou mercado que abriu): pagina o histórico até a última vela
                     velas = await baixar_historico(
-                        lambda p: self.pedir(p, reconectar=reconectar), s.simbolo, s.gran,
-                        min(faltam, s.n_base), self.agora())
+                        lambda p: self.pedir(p, reconectar=reconectar),
+                        s.simbolo,
+                        s.gran,
+                        min(faltam, s.n_base),
+                        self.agora(),
+                    )
                     s.mesclar(velas)
                     faltam = int((self.agora() - (s.ultima_epoch or ultima)) // s.gran) + 2
                 contagem = max(2, min(faltam, MAX_CONTAGEM_ASSINATURA))
             try:
-                r = await self.pedir({"ticks_history": s.simbolo, "style": "candles", "granularity": s.gran,
-                                      "count": contagem, "end": "latest", "subscribe": 1}, reconectar=reconectar)
+                r = await self.pedir(
+                    {
+                        "ticks_history": s.simbolo,
+                        "style": "candles",
+                        "granularity": s.gran,
+                        "count": contagem,
+                        "end": "latest",
+                        "subscribe": 1,
+                    },
+                    reconectar=reconectar,
+                )
             except DerivErro as e:
                 if e.codigo == "MarketIsClosed":
                     s.mercado_fechado = True
@@ -321,7 +354,6 @@ class DerivHub:
             s.sub_id = (r.get("subscription") or {}).get("id")
             s.casas = int(float(r.get("pip_size") or s.casas))
             s.mesclar([vela_de_dict(c) for c in r.get("candles", [])])
-            s.ultimo_tick = time.time()
 
     async def _reassinar_todas(self) -> None:
         for s in list(self.series.values()):
@@ -344,21 +376,25 @@ class DerivHub:
                 if s.mercado_fechado and s.carregando and s.carregando.done():
                     try:
                         await self._assinar(s)
-                    except Exception as e:
+                    except (DerivErro, ConexaoPerdida, asyncio.TimeoutError) as e:
                         log.warning("Reabrir %s: %s", s.simbolo, e)
             try:
                 await self.ativos(forcar=True)
-            except Exception as e:
+            except (DerivErro, ConexaoPerdida, asyncio.TimeoutError) as e:
                 log.warning("Atualizar lista de ativos: %s", e)
 
     # ------------------------------------------------------------------ ativos
     async def ativos(self, forcar: bool = False) -> list[dict]:
+        """Lista de ativos da Deriv (em cache por 10 minutos)."""
         if forcar or not self._ativos["lista"] or time.time() - self._ativos["t"] > 600:
             r = await self.pedir({"active_symbols": "brief"})
             lista = [normalizar_ativo(a) for a in r.get("active_symbols", [])]
             lista.sort(key=lambda a: (a["market_display_name"], a["submarket_display_name"], a["display_name"]))
-            self._ativos = {"t": time.time(), "lista": lista,
-                            "abertos": {a["symbol"]: a["exchange_is_open"] for a in lista}}
+            self._ativos = {
+                "t": time.time(),
+                "lista": lista,
+                "abertos": {a["symbol"]: a["exchange_is_open"] for a in lista},
+            }
         return self._ativos["lista"]
 
     def bolsa_aberta(self, simbolo: str) -> bool | None:

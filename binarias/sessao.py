@@ -1,7 +1,9 @@
 """Sessão ao vivo (uma por aba do navegador). Usa o DerivHub compartilhado e exatamente o mesmo
 código do backtest: estrategias.gerar_sinais, backtest.executar/resolver (via ranking) e
 timeframes.agregar. A estratégia líder (com histerese) e os avisos vêm de binarias/avisos.py."""
+
 import asyncio
+import contextlib
 import csv
 import json
 import os
@@ -13,20 +15,47 @@ import pandas as pd
 from . import mercado, progresso, scanner, sinal, veredito
 from .avisos import MotorAvisos, SeletorLider, nome_ativo
 from .backtest import ConfigBacktest, resolver
-from .config import (ATIVOS_SCANNER, EMPATE_PADRAO, FOLGA_FECHAMENTO, JANELA_RANKING, MIN_OPERACOES,
-                     N_HISTORICO, N_VELAS_GRAFICO, N_VELAS_PREVIA, PASTA_RESULTADOS, PROGRESSO_LIMITE,
-                     PROGRESSO_LIMITE_MAX, PROGRESSO_LIMITE_MIN)
+from .config import (
+    ATIVOS_SCANNER,
+    ATRASO_MAX_VELAS,
+    CICLO_SESSAO,
+    EMPATE_PADRAO,
+    FOLGA_FECHAMENTO,
+    JANELA_ENTRADA_FRACAO,
+    JANELA_ENTRADA_MAX,
+    JANELA_ENTRADA_MIN,
+    JANELA_RANKING,
+    MIN_OPERACOES,
+    N_HISTORICO,
+    N_VELAS_GRAFICO,
+    N_VELAS_PREVIA,
+    PASTA_RESULTADOS,
+    PROGRESSO_LIMITE,
+    PROGRESSO_LIMITE_MAX,
+    PROGRESSO_LIMITE_MIN,
+)
 from .estrategias import ESTRATEGIAS, POR_ID
 from .hub import DerivHub, SerieVelas
 from .log import obter
 from .ranking import calcular_ranking
-from .timeframes import agregar, granularidade_base, nome_timeframe, parse_timeframe
+from .timeframes import agregar, granularidade_base, linhas_ohlc, nome_timeframe, parse_timeframe
 
 log = obter("sessao")
 
 CSV_SINAIS = os.path.join(PASTA_RESULTADOS, "sinais_ao_vivo.csv")
-COLUNAS_CSV = ["data_sinal", "data_entrada", "ativo", "timeframe", "estrategia", "principal", "direcao",
-               "expiracao", "preco_entrada", "preco_saida", "resultado"]
+COLUNAS_CSV = [
+    "data_sinal",
+    "data_entrada",
+    "ativo",
+    "timeframe",
+    "estrategia",
+    "principal",
+    "direcao",
+    "expiracao",
+    "preco_entrada",
+    "preco_saida",
+    "resultado",
+]
 
 
 NOMES = {e.id: e.nome for e in ESTRATEGIAS}
@@ -37,6 +66,7 @@ class NavegadorFechado(Exception):
 
 
 def fmt_data(epoch: int) -> str:
+    """Epoch -> 'AAAA-MM-DD hh:mm:ss' (UTC)."""
     return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -68,19 +98,16 @@ def _limpar(o):
     return o
 
 
-def _linhas(df: pd.DataFrame) -> list[list]:
-    return [[int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4])]
-            for r in df[["epoch", "open", "high", "low", "close"]].itertuples(index=False)]
-
-
 class Sessao:
+    """Uma aba conectada: ativo principal, scanner, líder, avisos e registro em CSV."""
+
     def __init__(self, navegador, hub: DerivHub):
         self.nav = navegador
         self.hub = hub
         self.tarefas: list[asyncio.Task] = []
         self.series: list[SerieVelas] = []
         self.ativas: set[str] = set(POR_ID)
-        self.observacao = False          # modo observação (só muda o que a tela mostra, nunca o ENTRAR)
+        self.observacao = False  # modo observação (só muda o que a tela mostra, nunca o ENTRAR)
         self.seletor = SeletorLider()
         self.motor = MotorAvisos(limite=PROGRESSO_LIMITE)
         self.ranking: dict | None = None
@@ -89,10 +116,12 @@ class Sessao:
         self._seq = 0
         self._lock_envio = asyncio.Lock()
         self.fechado = False
-        self.simbolo = self.tf = None
+        self.simbolo: str = ""
+        self.tf: str = ""
 
     # ------------------------------------------------------------------ envio
     async def enviar(self, tipo: str, **conteudo) -> None:
+        """Envia uma mensagem JSON ao navegador (NaN viram null)."""
         if self.fechado:
             raise NavegadorFechado()
         try:
@@ -103,14 +132,17 @@ class Sessao:
             raise NavegadorFechado() from e
 
     async def status(self, texto: str, nivel: str = "info") -> None:
+        """Mensagem de status para a tela."""
         await self.enviar("status", texto=texto, nivel=nivel)
 
     async def avisar(self, lista: list[dict]) -> None:
+        """Envia os avisos (som/notificação) decididos pelo motor."""
         for a in lista:
             await self.enviar("aviso", **a)
 
     @property
     def ativo(self) -> str:
+        """Nome do ativo para os textos (ex.: EUR/USD)."""
         return nome_ativo(self.simbolo)
 
     # ------------------------------------------------------------------ preferências do navegador
@@ -121,7 +153,7 @@ class Sessao:
             novas = {i for i in msg["ativas"] if i in POR_ID}
             if novas != self.ativas:
                 self.ativas = novas
-                if self.ranking is not None:   # desmarcar a líder tira ela do posto na hora
+                if self.ranking is not None:  # desmarcar a líder tira ela do posto na hora
                     troca = self.seletor.atualizar(self.ranking, self.ativas, contar=False)
                     self.ranking = self._com_lider(self.ranking)
                     if troca["trocou"]:
@@ -136,12 +168,20 @@ class Sessao:
 
     def _com_lider(self, ranking: dict) -> dict:
         s = self.seletor
-        return {**ranking, "lider": s.atual,
-                "lider_info": {"desafiante": s.desafiante, "contagem": s.contagem,
-                               "confirmacao": s.velas_confirmacao, "margem_ic": s.margem_ic}}
+        return {
+            **ranking,
+            "lider": s.atual,
+            "lider_info": {
+                "desafiante": s.desafiante,
+                "contagem": s.contagem,
+                "confirmacao": s.velas_confirmacao,
+                "margem_ic": s.margem_ic,
+            },
+        }
 
     # ------------------------------------------------------------------ controle
     async def iniciar(self, simbolo: str, timeframe: str, expiracao: int, payout: float) -> None:
+        """Começa a acompanhar um ativo/timeframe (para a sessão anterior antes)."""
         await self.parar()
         try:
             seg = parse_timeframe(timeframe)
@@ -153,24 +193,31 @@ class Sessao:
         self.gran = granularidade_base(seg)
         self.fator = seg // self.gran
         self.n_base = (N_HISTORICO + 2) * self.fator
-        self.hold = min(60.0, max(10.0, seg * 0.25))   # quanto tempo mostrar ENTRAR AGORA / CONFLITO
+        self.hold = min(
+            JANELA_ENTRADA_MAX, max(JANELA_ENTRADA_MIN, seg * JANELA_ENTRADA_FRACAO)
+        )  # quanto tempo mostrar ENTRAR AGORA / CONFLITO
         self.ranking = None
         self.seletor = SeletorLider()
         self.motor = MotorAvisos(limite=self.motor.limite, avisar_obs=self.motor.avisar_obs)
         self.recentes: dict[str, dict] = {}
         self.decisao_fixa: dict | None = None
         self._cache_prog: tuple = (None, None)
-        self.tarefas = [asyncio.create_task(self._proteger(c, nome)) for c, nome in (
-            (self._rodar(), "ativo"), (self._rodar_scanner(), "scanner"), (self._vigiar_conexao(), "conexão"))]
+        self.tarefas = [
+            asyncio.create_task(self._proteger(c, nome))
+            for c, nome in (
+                (self._rodar(), "ativo"),
+                (self._rodar_scanner(), "scanner"),
+                (self._vigiar_conexao(), "conexão"),
+            )
+        ]
 
     async def parar(self) -> None:
+        """Para as tarefas, libera as séries e registra operações sem resultado como CANCELADO."""
         for t in self.tarefas:
             t.cancel()
         for t in self.tarefas:
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
+            with contextlib.suppress(asyncio.CancelledError, NavegadorFechado):
+                await t  # as demais exceções já foram tratadas em _proteger
         self.tarefas = []
         for s in self.series:
             self.hub.liberar(s)
@@ -184,12 +231,10 @@ class Sessao:
             await coro
         except (asyncio.CancelledError, NavegadorFechado):
             raise
-        except Exception as e:  # noqa: BLE001 - última barreira da tarefa: registra e avisa a tela
+        except Exception as e:
             log.exception("Sessão %s %s: tarefa '%s' falhou", self.simbolo, self.tf, nome)
-            try:
+            with contextlib.suppress(NavegadorFechado):
                 await self.status(f"Erro interno ({nome}): {e}. Detalhes em resultados/erros.log", "erro")
-            except NavegadorFechado:
-                pass
 
     async def _obter(self, simbolo: str) -> SerieVelas:
         s = await self.hub.obter_serie(simbolo, self.gran, self.n_base)
@@ -238,7 +283,7 @@ class Sessao:
 
         versao, ultima_formando, ultimo_estado, ultimo_calc = -1, None, 0.0, 0.0
         while True:
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(CICLO_SESSAO)
             if s.versao == versao and time.time() - ultimo_calc < 1:
                 continue
             versao, ultimo_calc = s.versao, time.time()
@@ -247,11 +292,11 @@ class Sessao:
                 novas = fechadas[fechadas["epoch"] > self.ultima_fechada]
                 self.ultima_fechada = int(fechadas["epoch"].iat[-1])
                 self.df = fechadas
-                for v in _linhas(novas):
+                for v in linhas_ohlc(novas):
                     await self.enviar("vela", v=v)
                 await self._ao_fechar(formando, len(novas))
                 ultimo_estado = 0.0
-            atual = _linhas(formando)[0] if len(formando) else None
+            atual = linhas_ohlc(formando)[0] if len(formando) else None
             if atual and atual != ultima_formando:
                 ultima_formando = atual
                 await self.enviar("vela", v=atual)
@@ -277,24 +322,34 @@ class Sessao:
         for est in ESTRATEGIAS:
             try:
                 s = est.gerar_sinais(df)
-            except Exception:  # noqa: BLE001 - uma estratégia com bug não pode derrubar a sessão
+            except Exception:
                 log.exception("Estratégia %s falhou no histórico", est.id)
                 continue
             for i in s.index[s.isin(["CALL", "PUT"])]:
                 t = int(df["epoch"].iat[i])
                 if t >= inicio:
                     marcas.append({"t": t, "id": est.id, "dir": s.iat[i]})
-        velas = _linhas(grafico) + _linhas(formando)
-        await self.enviar("historico", simbolo=self.simbolo, timeframe=self.tf, seg=self.seg,
-                          expiracao=self.cfg.expiracao, payout=self.cfg.payout, casas=self.serie.casas,
-                          janela_entrada=self.hold,
-                          velas=velas, sinais=marcas, n_velas=len(df))
+        velas = linhas_ohlc(grafico) + linhas_ohlc(formando)
+        await self.enviar(
+            "historico",
+            simbolo=self.simbolo,
+            timeframe=self.tf,
+            seg=self.seg,
+            expiracao=self.cfg.expiracao,
+            payout=self.cfg.payout,
+            casas=self.serie.casas,
+            janela_entrada=self.hold,
+            velas=velas,
+            sinais=marcas,
+            n_velas=len(df),
+        )
         await self._enviar_analise(ranking, analise)
         dec = sinal.decidir(ranking, {}, {}, self.ativas, lider=self.seletor.atual)
         await self.enviar("decisao", **dec, novo=False, t=self.ultima_fechada, veredito=self._veredito(dec, {}))
 
     def _veredito(self, dec: dict, estados: dict, prog: dict | None = None) -> dict:
         humano = (self.analise or {}).get("humano")
+        assert self.ranking is not None  # só é chamado depois do primeiro ranking
         return veredito.montar(dec, self.ranking, humano, self.observacao, estados, self.ativas, prog)
 
     async def _enviar_analise(self, ranking: dict, analise: dict) -> None:
@@ -316,8 +371,15 @@ class Sessao:
                 op["t_entrada"] = int(depois["epoch"].iat[0])
                 self._registrar(op, entrada, saida, res)
                 del self.operacoes[est_id]
-                await self.enviar("resultado", op=op["n"], id=est_id, resultado=res, entrada=entrada, saida=saida,
-                                  principal=bool(op.get("principal")))
+                await self.enviar(
+                    "resultado",
+                    op=op["n"],
+                    id=est_id,
+                    resultado=res,
+                    entrada=entrada,
+                    saida=saida,
+                    principal=bool(op.get("principal")),
+                )
                 await self.avisar(self.motor.resultado(op, res, self.ativo))
 
         # 2) ranking + análise na vela que acabou de fechar (em thread: não trava o servidor)
@@ -330,8 +392,12 @@ class Sessao:
         dec = sinal.decidir(ranking, sinais, {}, ativas, lider=self.seletor.atual)
         t = int(epochs[-1])
         if n_novas > 1:
-            log.warning("%s %s: %d velas fecharam de uma vez (queda/atraso); só a última foi avaliada",
-                        self.simbolo, self.tf, n_novas)
+            log.warning(
+                "%s %s: %d velas fecharam de uma vez (queda/atraso); só a última foi avaliada",
+                self.simbolo,
+                self.tf,
+                n_novas,
+            )
 
         # 3) registra os sinais das estratégias marcadas (teste ao vivo) — uma operação por estratégia
         for est_id, d in sinais.items():
@@ -342,11 +408,27 @@ class Sessao:
             principal = dec["estado"] == "ENTRAR" and est_id == dec["estrategia"]
             if registrado:
                 self._seq += 1
-                self.operacoes[est_id] = {"n": self._seq, "id": est_id, "nome": nome, "dir": d, "t": t,
-                                          "t_entrada": t + self.seg, "principal": principal}
+                self.operacoes[est_id] = {
+                    "n": self._seq,
+                    "id": est_id,
+                    "nome": nome,
+                    "dir": d,
+                    "t": t,
+                    "t_entrada": t + self.seg,
+                    "principal": principal,
+                }
                 self.recentes[est_id] = {"dir": d, "ate": time.time() + self.hold}
-            await self.enviar("sinal", op=self._seq if registrado else None, id=est_id, nome=nome, dir=d, t=t,
-                              registrado=registrado, principal=principal, ativo=self.simbolo)
+            await self.enviar(
+                "sinal",
+                op=self._seq if registrado else None,
+                id=est_id,
+                nome=nome,
+                dir=d,
+                t=t,
+                registrado=registrado,
+                principal=principal,
+                ativo=self.simbolo,
+            )
 
         # 4) decisão principal (fica fixa por alguns segundos se for ENTRAR/CONFLITO)
         self.decisao_fixa = {**dec, "ate": time.time() + self.hold} if dec["estado"] in ("ENTRAR", "CONFLITO") else None
@@ -358,14 +440,21 @@ class Sessao:
 
     def _registrar(self, op: dict, entrada, saida, resultado: str) -> None:
         try:
-            gravar_csv({
-                "data_sinal": fmt_data(op["t"]), "data_entrada": fmt_data(op["t_entrada"]),
-                "ativo": self.simbolo, "timeframe": self.tf, "estrategia": op["nome"],
-                "principal": "sim" if op.get("principal") else "não", "direcao": op["dir"],
-                "expiracao": self.cfg.expiracao,
-                "preco_entrada": "" if entrada is None else entrada,
-                "preco_saida": "" if saida is None else saida, "resultado": resultado,
-            })
+            gravar_csv(
+                {
+                    "data_sinal": fmt_data(op["t"]),
+                    "data_entrada": fmt_data(op["t_entrada"]),
+                    "ativo": self.simbolo,
+                    "timeframe": self.tf,
+                    "estrategia": op["nome"],
+                    "principal": "sim" if op.get("principal") else "não",
+                    "direcao": op["dir"],
+                    "expiracao": self.cfg.expiracao,
+                    "preco_entrada": "" if entrada is None else entrada,
+                    "preco_saida": "" if saida is None else saida,
+                    "resultado": resultado,
+                }
+            )
         except OSError:
             log.exception("Não foi possível gravar %s (arquivo aberto no Excel?)", CSV_SINAIS)
 
@@ -388,7 +477,7 @@ class Sessao:
         for est in ESTRATEGIAS:
             try:
                 rapidas[est.id] = progresso.condicoes_agora(est, parcial)
-            except Exception:  # noqa: BLE001 - estratégia com bug: só ela fica sem estado
+            except Exception:
                 log.exception("Estratégia %s falhou na vela em formação", est.id)
         alvo = self._alvo_progresso()
         prog = None
@@ -424,21 +513,42 @@ class Sessao:
                 estado = "PARCIAL"
             else:
                 estado = "AGUARDANDO"
-            lista.append({"id": est.id, "estado": estado, "dir": lado, "cumpridas": cumpridas, "total": total,
-                          "pct": pct, "lider": est.id == lider, "em_operacao": est.id in self.operacoes})
+            lista.append(
+                {
+                    "id": est.id,
+                    "estado": estado,
+                    "dir": lado,
+                    "cumpridas": cumpridas,
+                    "total": total,
+                    "pct": pct,
+                    "lider": est.id == lider,
+                    "em_operacao": est.id in self.operacoes,
+                }
+            )
         if self.decisao_fixa and agora < self.decisao_fixa["ate"]:
             principal = {k: v for k, v in self.decisao_fixa.items() if k != "ate"}
         else:
             self.decisao_fixa = None
             previa = {k: v["sinal"] for k, v in rapidas.items()}
-            formando_lider = {lider: prog["dir"]} if (lider and prog and prog["id"] == lider
-                                                       and prog["pct"] >= limite and prog["dir"]) else {}
+            formando_lider = (
+                {lider: prog["dir"]}
+                if (lider and prog and prog["id"] == lider and prog["pct"] >= limite and prog["dir"])
+                else {}
+            )
             principal = sinal.decidir(self.ranking, previa, formando_lider, self.ativas, previa=True, lider=lider)
         estados = {x["id"]: x for x in lista}
         ver = self._veredito(principal, estados, prog)
         vela = int(formando["epoch"].iat[0]) if len(formando) else self._proximo_fechamento() - self.seg
-        await self.enviar("estado", estrategias=lista, principal=principal, veredito=ver, limite=limite,
-                          lider=lider, fecha_em=self._proximo_fechamento(), agora=self.hub.agora())
+        await self.enviar(
+            "estado",
+            estrategias=lista,
+            principal=principal,
+            veredito=ver,
+            limite=limite,
+            lider=lider,
+            fecha_em=self._proximo_fechamento(),
+            agora=self.hub.agora(),
+        )
         await self.avisar(self.motor.formacao(ver, prog, vela, self.ativo))
 
     # ------------------------------------------------------------------ scanner (Top 3)
@@ -446,7 +556,12 @@ class Sessao:
         if s.mercado_fechado or self.hub.bolsa_aberta(simbolo) is False or not len(fechadas):
             return False
         atraso = self.hub.agora() - (int(fechadas["epoch"].iat[-1]) + self.seg)
-        return atraso < 3 * self.seg + 5
+        return atraso < ATRASO_MAX_VELAS * self.seg + 5
+
+    @staticmethod
+    def _avaliar_ativos(retrato: dict, cfg: ConfigBacktest) -> list[dict]:
+        """Nota de cada ativo (roda em thread). `retrato`: {símbolo: (velas fechadas, aberto?)}."""
+        return [scanner.avaliar_ativo(sim, df, cfg, aberto) for sim, (df, aberto) in retrato.items()]
 
     async def _rodar_scanner(self) -> None:
         simbolos = list(dict.fromkeys(ATIVOS_SCANNER))
@@ -467,17 +582,33 @@ class Sessao:
                 for sim, s in prontas.items():
                     fechadas, _ = self._velas(s)
                     retrato[sim] = (fechadas, self._aberto(sim, s, fechadas))
-                cfg = self.cfg
-                resultados = await asyncio.to_thread(
-                    lambda: [scanner.avaliar_ativo(sim, df, cfg, ab) for sim, (df, ab) in retrato.items()])
+                resultados = await asyncio.to_thread(self._avaliar_ativos, retrato, self.cfg)
                 for sim, s in series.items():
                     if sim not in prontas:
                         motivo = s.erro or "carregando histórico..."
-                        resultados.append({"simbolo": sim, "aberto": None, "pontos": 0, "elegivel": False,
-                                           "motivo": motivo, "componentes": {}, "explicacao": [], "adx": None,
-                                           "resumo": motivo, "spark": [], "variacao": None})
+                        resultados.append(
+                            {
+                                "simbolo": sim,
+                                "aberto": None,
+                                "pontos": 0,
+                                "elegivel": False,
+                                "motivo": motivo,
+                                "componentes": {},
+                                "explicacao": [],
+                                "adx": None,
+                                "resumo": motivo,
+                                "spark": [],
+                                "variacao": None,
+                            }
+                        )
                 ordenados = scanner.ordenar(resultados)
-                await self.enviar("top3", itens=[r for r in ordenados if r["elegivel"]][:3], todos=ordenados,
-                                  regra=scanner.REGRA, timeframe=self.tf, atualizado=time.time(),
-                                  carregando=len(series) - len(prontas))
+                await self.enviar(
+                    "top3",
+                    itens=[r for r in ordenados if r["elegivel"]][:3],
+                    todos=ordenados,
+                    regra=scanner.REGRA,
+                    timeframe=self.tf,
+                    atualizado=time.time(),
+                    carregando=len(series) - len(prontas),
+                )
             await asyncio.sleep(1)

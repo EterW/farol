@@ -41,7 +41,7 @@ def pontuar(cumpridas: int, total: int, distancia_atr: float | None) -> int:
         prox = 0.0
     else:
         prox = max(0.0, 1.0 - distancia_atr / PROGRESSO_DIST_MAX_ATR)
-    return int(round(100 * (PROGRESSO_PESO_CONDICOES * frac + (1 - PROGRESSO_PESO_CONDICOES) * prox)))
+    return round(100 * (PROGRESSO_PESO_CONDICOES * frac + (1 - PROGRESSO_PESO_CONDICOES) * prox))
 
 
 def _ultimos(conds, lado: str) -> list[bool]:
@@ -54,8 +54,12 @@ def condicoes_agora(est: Estrategia, parcial: pd.DataFrame) -> dict:
     conds = est.gerar_condicoes(parcial)
     call, put = _ultimos(conds, "call"), _ultimos(conds, "put")
     sinal = "CALL" if all(call) and not all(put) else "PUT" if all(put) and not all(call) else None
-    return {"CALL": call, "PUT": put, "sinal": sinal,
-            "textos": {"CALL": [c.texto_call for c in conds], "PUT": [c.texto_put for c in conds]}}
+    return {
+        "CALL": call,
+        "PUT": put,
+        "sinal": sinal,
+        "textos": {"CALL": [c.texto_call for c in conds], "PUT": [c.texto_put for c in conds]},
+    }
 
 
 def melhor_lado(av: dict) -> tuple[str | None, int, int]:
@@ -75,7 +79,7 @@ def _distancia(est: Estrategia, parcial: pd.DataFrame, lado: str, atr_v: float) 
     i = len(df) - 1
     cols = {c: df.columns.get_loc(c) for c in ("high", "low", "close")}
     alta, baixa, fech = (float(df.iat[i, cols[c]]) for c in ("high", "low", "close"))
-    passos = int(round(PROGRESSO_DIST_MAX_ATR / PROGRESSO_PASSO_ATR))
+    passos = round(PROGRESSO_DIST_MAX_ATR / PROGRESSO_PASSO_ATR)
     for k in range(1, passos + 1):
         for direcao in (1, -1):
             novo = fech + direcao * k * PROGRESSO_PASSO_ATR * atr_v
@@ -97,8 +101,14 @@ def calcular(est: Estrategia, parcial: pd.DataFrame) -> dict:
         cumpridas, total = sum(oks), len(oks)
         dist = 0.0 if cumpridas == total else _distancia(est, parcial, lado, atr_v)
         pct = pontuar(cumpridas, total, dist)
-        cand = {"dir": lado, "pct": pct, "cumpridas": cumpridas, "total": total, "distancia_atr": dist,
-                "condicoes": [{"texto": t, "ok": ok} for t, ok in zip(av["textos"][lado], oks, strict=True)]}
+        cand = {
+            "dir": lado,
+            "pct": pct,
+            "cumpridas": cumpridas,
+            "total": total,
+            "distancia_atr": dist,
+            "condicoes": [{"texto": t, "ok": ok} for t, ok in zip(av["textos"][lado], oks, strict=True)],
+        }
         if melhor is None or (pct, cumpridas) > (melhor["pct"], melhor["cumpridas"]):
             melhor = cand
     assert melhor is not None
@@ -107,12 +117,21 @@ def calcular(est: Estrategia, parcial: pd.DataFrame) -> dict:
     return {**melhor, "id": est.id, "nome": est.nome, "sinal": av["sinal"], "explicacao": EXPLICACAO}
 
 
-def montar(est: Estrategia, lado: str | None, oks: list[bool], distancia_atr: float | None,
-           textos: list[str] | None = None) -> dict:
+def montar(
+    est: Estrategia, lado: str | None, oks: list[bool], distancia_atr: float | None, textos: list[str] | None = None
+) -> dict:
     """Mesmo formato de `calcular`, a partir de condições já conhecidas (usado pela demonstração)."""
     textos = textos or [f"Condição {k + 1}" for k in range(len(oks))]
     pct = pontuar(sum(oks), len(oks), 0.0 if all(oks) else distancia_atr)
-    return {"id": est.id, "nome": est.nome, "dir": lado if pct else None, "pct": pct, "cumpridas": sum(oks),
-            "total": len(oks), "distancia_atr": distancia_atr, "sinal": lado if all(oks) else None,
-            "condicoes": [{"texto": t, "ok": ok} for t, ok in zip(textos, oks, strict=True)],
-            "explicacao": EXPLICACAO}
+    return {
+        "id": est.id,
+        "nome": est.nome,
+        "dir": lado if pct else None,
+        "pct": pct,
+        "cumpridas": sum(oks),
+        "total": len(oks),
+        "distancia_atr": distancia_atr,
+        "sinal": lado if all(oks) else None,
+        "condicoes": [{"texto": t, "ok": ok} for t, ok in zip(textos, oks, strict=True)],
+        "explicacao": EXPLICACAO,
+    }

@@ -1,14 +1,15 @@
 import pandas as pd
-import pytest
-
-from binarias import backtest as bt, ranking as rk
-from binarias.estrategias import Estrategia, _sinais
 from conftest import df_aleatorio, df_de_ohlc
+
+from binarias import backtest as bt
+from binarias import ranking as rk
+from binarias.estrategias import Estrategia, _sinais
 
 
 def _df_previsivel(n=1000, acerto=0.7, seed=0):
     """Velas em que 'seguir a cor' acerta ~`acerto` das vezes."""
     import numpy as np
+
     rng = np.random.default_rng(seed)
     linhas, preco, cor = [], 100.0, 1
     for _ in range(n):
@@ -36,8 +37,13 @@ def contra(df):
 
 def test_vantagem_comprovada_eh_escolhida():
     df = _df_previsivel(1200, acerto=0.70)
-    r = rk.calcular_ranking(df, bt.ConfigBacktest(payout=0.85), janela=500, min_ops=100,
-                            estrategias=[_est("contra", contra), _est("seguir", seguir)])
+    r = rk.calcular_ranking(
+        df,
+        bt.ConfigBacktest(payout=0.85),
+        janela=500,
+        min_ops=100,
+        estrategias=[_est("contra", contra), _est("seguir", seguir)],
+    )
     assert r["melhor"] == "seguir"
     top = r["linhas"][0]
     assert top["id"] == "seguir" and top["janela"]["vantagem"]
@@ -47,16 +53,17 @@ def test_vantagem_comprovada_eh_escolhida():
 
 def test_sem_vantagem_em_dado_aleatorio():
     from binarias.estrategias import ESTRATEGIAS
-    r = rk.calcular_ranking(df_aleatorio(2000, seed=11), bt.ConfigBacktest(payout=0.85),
-                            janela=500, min_ops=100, estrategias=ESTRATEGIAS)
+
+    r = rk.calcular_ranking(
+        df_aleatorio(2000, seed=11), bt.ConfigBacktest(payout=0.85), janela=500, min_ops=100, estrategias=ESTRATEGIAS
+    )
     assert r["melhor"] is None, "em passeio aleatório nada deveria ter vantagem com payout 85%"
     assert len(r["linhas"]) == len(ESTRATEGIAS)
 
 
 def test_minimo_de_operacoes():
     df = _df_previsivel(300, acerto=0.9)  # ~300 ops no total
-    r = rk.calcular_ranking(df, bt.ConfigBacktest(), janela=80, min_ops=100,
-                            estrategias=[_est("seguir", seguir)])
+    r = rk.calcular_ranking(df, bt.ConfigBacktest(), janela=80, min_ops=100, estrategias=[_est("seguir", seguir)])
     assert r["linhas"][0]["janela"]["decididas"] < 100
     assert r["melhor"] is None
 
@@ -79,8 +86,10 @@ def test_perdendo_forca():
 def test_estrategia_com_erro_nao_derruba_ranking():
     def quebrada(df):
         raise RuntimeError("bug")
-    r = rk.calcular_ranking(df_aleatorio(300), bt.ConfigBacktest(),
-                            estrategias=[_est("quebrada", quebrada), _est("seguir", seguir)])
+
+    r = rk.calcular_ranking(
+        df_aleatorio(300), bt.ConfigBacktest(), estrategias=[_est("quebrada", quebrada), _est("seguir", seguir)]
+    )
     assert any(l["erro"] for l in r["linhas"]) and r["linhas"][-1]["id"] == "quebrada"
     assert not rk.tabela(r).empty
 

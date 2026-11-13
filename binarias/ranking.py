@@ -12,6 +12,7 @@ Ordem da lista (nunca pelo percentual bruto, que engana com poucas operações):
 
 Sempre sem martingale (gale esconde o risco e invalida a conta de break-even).
 """
+
 from dataclasses import replace
 
 import pandas as pd
@@ -33,7 +34,7 @@ def estatisticas(ops: pd.DataFrame, payout: float, min_ops: int = MIN_OPERACOES)
     inf, sup = wilson(wins, n, CONFIANCA)
     be = break_even(payout)
     return {
-        "operacoes": int(len(ops)),
+        "operacoes": len(ops),
         "wins": wins,
         "losses": losses,
         "empates": int((ops["resultado"] == "EMPATE").sum()),
@@ -62,8 +63,8 @@ def comparar_forca(janela: dict, anterior: dict) -> dict:
 SELOS = {
     "comprovada": "Vantagem comprovada",
     "perdendo": "Perdendo força",
-    "abaixo": "Abaixo do mínimo",      # entre MIN_OPS_AMOSTRA e min_ops operações
-    "poucos": "Poucos dados",          # menos de MIN_OPS_AMOSTRA operações (amostra pequena)
+    "abaixo": "Abaixo do mínimo",  # entre MIN_OPS_AMOSTRA e min_ops operações
+    "poucos": "Poucos dados",  # menos de MIN_OPS_AMOSTRA operações (amostra pequena)
     "sem": "Sem vantagem",
 }
 
@@ -71,7 +72,8 @@ SELOS = {
 def selo(janela: dict | None, forca: dict | None, min_ops: int = MIN_OPERACOES) -> dict:
     """Selo em linguagem simples para a tela. A ordem importa: 'comprovada' só com a regra completa
     (≥ min_ops e IC acima do break-even, já calculada em `janela['vantagem']`)."""
-    n = (janela or {}).get("decididas") or 0
+    janela = janela or {}
+    n = janela.get("decididas") or 0
     if n < MIN_OPS_AMOSTRA:
         codigo = "poucos"
     elif janela.get("vantagem"):
@@ -82,8 +84,12 @@ def selo(janela: dict | None, forca: dict | None, min_ops: int = MIN_OPERACOES) 
         codigo = "abaixo"
     else:
         codigo = "sem"
-    return {"codigo": codigo, "texto": SELOS[codigo], "amostra_pequena": n < MIN_OPS_AMOSTRA,
-            "perdendo_forca": bool(forca and forca.get("estado") == "perdendo força")}
+    return {
+        "codigo": codigo,
+        "texto": SELOS[codigo],
+        "amostra_pequena": n < MIN_OPS_AMOSTRA,
+        "perdendo_forca": bool(forca and forca.get("estado") == "perdendo força"),
+    }
 
 
 def status(linha: dict) -> int:
@@ -102,9 +108,15 @@ def chave_ordem(linha: dict) -> tuple:
     return (status(linha), -(j.get("ic_inf") or 0.0), -(j.get("decididas") or 0), linha.get("nome", ""))
 
 
-def calcular_ranking(df: pd.DataFrame, cfg: bt.ConfigBacktest, janela: int = JANELA_RANKING,
-                     min_ops: int = MIN_OPERACOES, estrategias=None, params: dict | None = None,
-                     elegiveis: set | None = None) -> dict:
+def calcular_ranking(
+    df: pd.DataFrame,
+    cfg: bt.ConfigBacktest,
+    janela: int = JANELA_RANKING,
+    min_ops: int = MIN_OPERACOES,
+    estrategias=None,
+    params: dict | None = None,
+    elegiveis: set | None = None,
+) -> dict:
     """Ranking de todas as estratégias em `df` (velas FECHADAS).
 
     `elegiveis`: ids que podem ser escolhidos como "melhor" (ex.: as marcadas na tela). None = todas.
@@ -122,60 +134,94 @@ def calcular_ranking(df: pd.DataFrame, cfg: bt.ConfigBacktest, janela: int = JAN
             ops = bt.executar(df, sinais, cfg).operacoes
         except Exception as e:
             log.exception("Estratégia %s falhou no ranking", est.id)
-            linhas.append({"id": est.id, "nome": est.nome, "sigla": est.sigla, "erro": str(e),
-                           "janela": None, "historico": None, "forca": None,
-                           "sinal": None, "selo": selo(None, None, min_ops)})
+            linhas.append(
+                {
+                    "id": est.id,
+                    "nome": est.nome,
+                    "sigla": est.sigla,
+                    "erro": str(e),
+                    "janela": None,
+                    "historico": None,
+                    "forca": None,
+                    "sinal": None,
+                    "selo": selo(None, None, min_ops),
+                }
+            )
             continue
         na_janela = ops["idx_sinal"] >= inicio_janela
         jan = estatisticas(ops[na_janela], cfg.payout, min_ops)
         hist = estatisticas(ops, cfg.payout, min_ops)
         ant = estatisticas(ops[~na_janela], cfg.payout, min_ops)
         forca = comparar_forca(jan, ant)
-        linhas.append({
-            "id": est.id, "nome": est.nome, "sigla": est.sigla, "erro": None,
-            "janela": jan, "historico": hist, "forca": forca,
-            "sinal": ultimo_valor(sinais), "selo": selo(jan, forca, min_ops),
-        })
+        linhas.append(
+            {
+                "id": est.id,
+                "nome": est.nome,
+                "sigla": est.sigla,
+                "erro": None,
+                "janela": jan,
+                "historico": hist,
+                "forca": forca,
+                "sinal": ultimo_valor(sinais),
+                "selo": selo(jan, forca, min_ops),
+            }
+        )
 
     linhas.sort(key=chave_ordem)
-    melhor = next((l["id"] for l in linhas if l["janela"] and l["janela"]["vantagem"]
-                   and (elegiveis is None or l["id"] in elegiveis)), None)
+    melhor = next(
+        (
+            l["id"]
+            for l in linhas
+            if l["janela"] and l["janela"]["vantagem"] and (elegiveis is None or l["id"] in elegiveis)
+        ),
+        None,
+    )
     return {
         "linhas": linhas,
         "melhor": melhor,
         "janela": int(min(janela, len(df))),
-        "velas": int(len(df)),
+        "velas": len(df),
         "break_even": be,
         "payout": cfg.payout,
         "expiracao": cfg.expiracao,
         "min_ops": int(min_ops),
         "confianca": CONFIANCA,
         "min_ops_amostra": MIN_OPS_AMOSTRA,
-        "ordem": ("Ordem: vantagem comprovada primeiro; depois pelo pior caso plausível (limite inferior da "
-                  "margem de erro), nunca pelo percentual bruto; empate: mais operações primeiro."),
-        "criterio": (f"Melhor do momento só se, nas últimas {min(janela, len(df))} velas, tiver ≥ {min_ops} "
-                     f"operações E o limite inferior do IC de Wilson {CONFIANCA:.0%} do acerto ficar acima do "
-                     f"break-even de {be:.2%} (payout {cfg.payout:.0%}). Sem gale."),
+        "ordem": (
+            "Ordem: vantagem comprovada primeiro; depois pelo pior caso plausível (limite inferior da "
+            "margem de erro), nunca pelo percentual bruto; empate: mais operações primeiro."
+        ),
+        "criterio": (
+            f"Melhor do momento só se, nas últimas {min(janela, len(df))} velas, tiver ≥ {min_ops} "
+            f"operações E o limite inferior do IC de Wilson {CONFIANCA:.0%} do acerto ficar acima do "
+            f"break-even de {be:.2%} (payout {cfg.payout:.0%}). Sem gale."
+        ),
     }
 
 
 def tabela(ranking: dict) -> pd.DataFrame:
     """Ranking em formato de tabela (para terminal/CSV)."""
+
     def pct(v):
         return None if v is None else round(100 * v, 2)
+
     linhas = []
     for l in ranking["linhas"]:
         j, h = l["janela"] or {}, l["historico"] or {}
-        linhas.append({
-            "estrategia": l["nome"],
-            "ops_janela": j.get("operacoes"), "acerto_janela_%": pct(j.get("acerto")),
-            "ic95_janela_%": None if j.get("ic_inf") is None else f"{pct(j['ic_inf'])}–{pct(j['ic_sup'])}",
-            "lucro_janela": j.get("lucro"),
-            "ops_hist": h.get("operacoes"), "acerto_hist_%": pct(h.get("acerto")),
-            "ic95_hist_%": None if h.get("ic_inf") is None else f"{pct(h['ic_inf'])}–{pct(h['ic_sup'])}",
-            "lucro_hist": h.get("lucro"),
-            "vantagem_comprovada": "SIM" if j.get("vantagem") else "não",
-            "forca": (l["forca"] or {}).get("estado"),
-            "erro": l["erro"] or "",
-        })
+        linhas.append(
+            {
+                "estrategia": l["nome"],
+                "ops_janela": j.get("operacoes"),
+                "acerto_janela_%": pct(j.get("acerto")),
+                "ic95_janela_%": None if j.get("ic_inf") is None else f"{pct(j['ic_inf'])}–{pct(j['ic_sup'])}",
+                "lucro_janela": j.get("lucro"),
+                "ops_hist": h.get("operacoes"),
+                "acerto_hist_%": pct(h.get("acerto")),
+                "ic95_hist_%": None if h.get("ic_inf") is None else f"{pct(h['ic_inf'])}–{pct(h['ic_sup'])}",
+                "lucro_hist": h.get("lucro"),
+                "vantagem_comprovada": "SIM" if j.get("vantagem") else "não",
+                "forca": (l["forca"] or {}).get("estado"),
+                "erro": l["erro"] or "",
+            }
+        )
     return pd.DataFrame(linhas)

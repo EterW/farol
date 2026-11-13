@@ -1,4 +1,5 @@
 """Estatística usada no ranking e na validação."""
+
 import math
 from statistics import NormalDist
 
@@ -6,6 +7,7 @@ from .config import CONFIANCA
 
 
 def z_bilateral(confianca: float = CONFIANCA) -> float:
+    """Valor z bilateral para o nível de confiança (0,95 -> 1,96)."""
     return NormalDist().inv_cdf((1 + confianca) / 2)
 
 
