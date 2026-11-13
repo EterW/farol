@@ -56,13 +56,18 @@ async def ciclo(_app):
     await hub.fechar()
 
 
-app = FastAPI(title="Limiar · ao vivo", lifespan=ciclo)
+app = FastAPI(title="Farol · ao vivo", lifespan=ciclo)
 app.mount("/static", StaticFiles(directory=PASTA_STATIC), name="static")
 
 
 @app.get("/")
 async def pagina():
     return FileResponse(os.path.join(PASTA_STATIC, "index.html"))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(os.path.join(PASTA_STATIC, "marca", "favicon.ico"))
 
 
 @app.get("/api/config")

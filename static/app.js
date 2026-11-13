@@ -1,4 +1,4 @@
-/* Limiar · modo ao vivo.
+/* Farol · modo ao vivo.
    O navegador NÃO decide nada: o veredito (ENTRAR / SE PREPARANDO / AGUARDAR / CONFLITO / OBSERVAÇÃO)
    chega pronto do servidor (binarias/veredito.py), com probabilidade estimada, faixa, amostra e break-even.
    Aqui só desenhamos, atualizando apenas o que mudou. */
@@ -39,7 +39,7 @@ let barras = [], sinaisMarcados = [], assinaturaMarcas = "";
 try {
   chart = LightweightCharts.createChart($("grafico"), {
     autoSize: true,
-    layout: { background: { type: "solid", color: css("--grafico-fundo") }, textColor: css("--grafico-texto"), fontSize: 12, fontFamily: css("--fonte-numero") },
+    layout: { attributionLogo: true, background: { type: "solid", color: css("--grafico-fundo") }, textColor: css("--grafico-texto"), fontSize: 12, fontFamily: css("--fonte-numero") },
     grid: { vertLines: { color: css("--grafico-grade") }, horzLines: { color: css("--grafico-grade") } },
     rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.14, bottom: 0.08 } },
     timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 9 },
@@ -131,7 +131,7 @@ function aviso(titulo, texto, tipo = "", icone = "i-sino", duracao = 8000) {
 }
 function notificar(titulo, texto, forcar = false) {
   if (!("Notification" in window) || Notification.permission !== "granted" || (!document.hidden && !forcar)) return false;
-  try { new Notification(titulo, { body: texto, tag: "limiar", silent: true }); return true; } catch { return false; }
+  try { new Notification(titulo, { body: texto, tag: "farol", icon: "/static/marca/icone-192.png", badge: "/static/marca/icone-192.png", silent: true }); return true; } catch { return false; }
 }
 const nomeAtivo = (s) => NOMES[s] || (s || "").replace(/^frx/, "").replace(/^([A-Z]{3})([A-Z]{3})$/, "$1/$2");
 
@@ -231,7 +231,7 @@ function mostrarVeredito(v) {
 }
 function vereditoLocal(estado) {
   if (estado === "INICIO") return { estado, titulo: "Escolha um ativo para começar",
-    frase: "Toque em Conectar. O Limiar analisa o histórico e só sugere entrada quando uma estratégia tem vantagem comprovada." };
+    frase: "Toque em Conectar. O Farol analisa o histórico e só sugere entrada quando uma estratégia tem vantagem comprovada." };
   return { estado: "CARREGANDO", titulo: "Analisando o histórico…",
     frase: "Carregando as velas e calculando todas as estratégias. Leva alguns segundos." };
 }
@@ -691,7 +691,7 @@ $("btnTestar").onclick = async () => {
   somEntrada("CALL", true); await espera(1500);
   if (!("Notification" in window)) aviso("3 · Notificação", "Este navegador não tem notificações.", "erro", "i-alerta", 10000);
   else if (Notification.permission === "granted") {
-    notificar("Teste de alerta · Limiar", "Se você está vendo isto, as notificações funcionam.", true);
+    notificar("Teste de alerta · Farol", "Se você está vendo isto, as notificações funcionam.", true);
     aviso("3 · Notificação enviada", "Deve aparecer no canto da tela. Se não aparecer, confira o modo Não perturbe do sistema.", "", "i-sino", 10000);
   } else aviso("3 · Notificações bloqueadas", "Clique no cadeado ao lado do endereço e permita notificações.", "erro", "i-alerta", 12000);
   b.disabled = false;
@@ -699,7 +699,7 @@ $("btnTestar").onclick = async () => {
 
 // ================================================================== tour de primeira visita
 const PASSOS = [
-  { alvo: "veredito", titulo: "O veredito", texto: "Este cartão diz, em português simples, o que fazer agora: ENTRAR, SE PREPARANDO, AGUARDAR ou CONFLITO. ENTRAR só aparece quando uma estratégia tem vantagem comprovada no histórico, e sempre com a probabilidade estimada e a margem de erro." },
+  { alvo: "veredito", titulo: "Bem-vindo ao Farol", texto: "O Farol só acende quando os dados sustentam. Este cartão diz, em português simples, o que fazer agora: ENTRAR, SE PREPARANDO, AGUARDAR ou CONFLITO. ENTRAR só aparece quando uma estratégia tem vantagem comprovada no histórico, e sempre com a probabilidade estimada e a margem de erro." },
   { alvo: "grafico", titulo: "O gráfico", texto: "Velas ao vivo. A linha tracejada marca o fim da vela atual, com a contagem. As setas mostram só o sinal principal (★) e os sinais da estratégia líder." },
   { alvo: "top", titulo: "Top 3 ativos", texto: "Os ativos com o melhor cenário agora, com nota de 0 a 100 (o ? explica a regra). Toque em um para trocar o gráfico." },
   { alvo: "modos", titulo: "Simples ou Detalhado", texto: "No Detalhado você vê quem está acertando mais, o mercado em palavras simples e as suas operações. Em Alertas você testa o som. O botão ? reabre este guia." },

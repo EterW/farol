@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Farol"><title>Farol</title>
+  <defs>
+    <linearGradient id="skt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c4b3ff"/><stop offset="1" stop-color="#8d6bff"/>
+    </linearGradient>
+    <linearGradient id="skfd" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c9b8ff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#c9b8ff" stop-opacity=".08"/>
+    </linearGradient>
+    <radialGradient id="skg" cx="32" cy="19.5" r="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c9b8ff" stop-opacity=".28"/><stop offset="1" stop-color="#c9b8ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="19.5" r="22" fill="url(#skg)"/>
+  <path d="M38 16.5 61 8v23l-23-8z" fill="url(#skfd)"/>
+  <path d="M24.5 15 32 8.5l7.5 6.5z" fill="url(#skt)"/>
+  <rect x="26" y="15" width="12" height="9" rx="2.2" fill="#f6f2ff"/>
+  <rect x="22.5" y="24" width="19" height="3.6" rx="1.8" fill="url(#skt)"/>
+  <path d="M26 29.4h12l4.8 27.2H21.2z" fill="url(#skt)"/>
+  <path d="M24.25 39.4h15.5l.9 5.2H23.35z" fill="#09090f" opacity=".55"/>
+</svg>

@@ -39,7 +39,7 @@ python live.py --porta 8080 --sem-navegador
 ```
 `http://127.0.0.1:8000/?auto` conecta direto com a última escolha. Informe **Payout %**: ele define o break-even.
 
-**Interface "Limiar"** (`static/index.html`, `static/app.css`, `static/app.js`; paleta e fontes só em `static/tema.css`):
+**Interface do Farol** (`static/index.html`, `static/app.css`, `static/app.js`; paleta e fontes só em `static/tema.css`):
 - **Veredito** no topo, em português simples: `ENTRAR AGORA` (▲ COMPRA / ▼ VENDA), `SE PREPARANDO`, `AGUARDAR`
   (com o motivo), `CONFLITO, NÃO ENTRAR` e `MODO OBSERVAÇÃO` (melhor candidata, rotulada “NÃO COMPROVADA”, sem som).
   Sempre com probabilidade **estimada**, faixa de incerteza (Wilson 95%), nº de operações e break-even. A regra é

@@ -5,7 +5,7 @@ from .indicadores import adx, atr, sma
 
 PERIODO_MA = 50
 VELAS_INCLINACAO = 10
-LIMIAR_INCLINACAO = 0.5    # em ATRs ao longo de VELAS_INCLINACAO velas
+LIMITE_INCLINACAO = 0.5    # em ATRs ao longo de VELAS_INCLINACAO velas
 PERIODO_ADX = 14
 PERIODO_ATR = 14
 JANELA_VOL = 500
@@ -14,7 +14,7 @@ VOL_SAUDAVEL = (20, 90)    # percentil do ATR considerado "saudável" (nem parad
 
 CRITERIO = (
     f"Tendência: ALTA se o preço fecha acima da média de {PERIODO_MA} e a média subiu mais de "
-    f"{LIMIAR_INCLINACAO} ATR nas últimas {VELAS_INCLINACAO} velas; BAIXA no inverso; senão LATERAL. "
+    f"{LIMITE_INCLINACAO} ATR nas últimas {VELAS_INCLINACAO} velas; BAIXA no inverso; senão LATERAL. "
     f"Força pelo ADX({PERIODO_ADX}): < {ADX_MODERADO} fraca, {ADX_MODERADO}–{ADX_FORTE} moderada, "
     f"≥ {ADX_FORTE} forte. Volatilidade: percentil do ATR({PERIODO_ATR}) atual nas últimas {JANELA_VOL} velas "
     f"(saudável entre {VOL_SAUDAVEL[0]} e {VOL_SAUDAVEL[1]})."
@@ -91,9 +91,9 @@ def analisar(df: pd.DataFrame, formando: pd.DataFrame | None = None, nome: str =
         return {"ok": False, "motivo": "ATR zero (mercado parado)", "criterio": CRITERIO}
     inclinacao = (ma_v - float(ma.iat[-1 - VELAS_INCLINACAO])) / atr_v
     distancia = (preco - ma_v) / atr_v
-    if preco > ma_v and inclinacao > LIMIAR_INCLINACAO:
+    if preco > ma_v and inclinacao > LIMITE_INCLINACAO:
         tendencia = "ALTA"
-    elif preco < ma_v and inclinacao < -LIMIAR_INCLINACAO:
+    elif preco < ma_v and inclinacao < -LIMITE_INCLINACAO:
         tendencia = "BAIXA"
     else:
         tendencia = "LATERAL"

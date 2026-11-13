@@ -1,4 +1,4 @@
-/* Limiar · layout e componentes. Cores, fontes e raios vêm de tema.css. */
+/* Farol · layout e componentes. Cores, fontes e raios vêm de tema.css. */
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
@@ -70,9 +70,14 @@ body.modo-simples .so-detalhado { display: none; }
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--linha);
 }
-.logo { display: flex; align-items: center; gap: 9px; color: var(--texto); text-decoration: none; margin-right: 8px; }
-.logo svg { width: 28px; height: 28px; }
-.logo span { font: 800 21px/1 var(--fonte-titulo); letter-spacing: -.02em; }
+.logo { display: flex; align-items: center; gap: 8px; color: var(--texto); text-decoration: none; margin-right: 8px; }
+.logo-simbolo { width: 38px; height: 38px; flex: none; }
+.logo-texto { display: flex; flex-direction: column; gap: 3px; }
+.logo-texto b { font: 800 23px/1 var(--fonte-titulo); letter-spacing: -.02em; }
+.logo-texto small { font-size: 12px; line-height: 1.15; color: var(--texto-2); white-space: nowrap; }
+.atribuicao { margin-left: auto; color: var(--texto-3); font-size: 12px; text-decoration: none; }
+.atribuicao:hover { color: var(--texto-2); text-decoration: underline; }
+.tour-marca { display: flex; align-items: center; gap: 10px; }
 .chip-ativo {
   display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px 6px 14px; cursor: pointer;
   border-radius: 12px; border: 1px solid var(--linha-forte); background: var(--superficie);

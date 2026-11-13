@@ -1,0 +1,6 @@
+﻿# fim de linha normalizado no repositório (LF); cada sistema usa o seu na cópia de trabalho
+* text=auto
+*.png binary
+*.ico binary
+*.zip binary
+*.ttf binary
