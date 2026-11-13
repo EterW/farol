@@ -1,0 +1,28 @@
+# dados baixados e resultados gerados (ficam só na sua máquina)
+data/
+resultados/
+
+# backups
+backups/
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# ambientes virtuais
+venv/
+.venv/
+env/
+
+# editores / sistema
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#09090f">
+<title>Limiar · ao vivo</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='none' stroke='%23a990ff' stroke-width='3' stroke-dasharray='56 100' stroke-linecap='round' transform='rotate(-90 16 16)'/%3E%3Crect x='6' y='15' width='20' height='2.6' rx='1.3' fill='%23efedf8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/tema.css">
+<link rel="stylesheet" href="/static/app.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body class="modo-simples">
+
+<!-- ícones (desenhados aqui, sem dependência externa) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-cima" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-baixo" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lado" viewBox="0 0 24 24"><path d="M4 12h16M15 7l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pausa" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-ampulheta" viewBox="0 0 24 24"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-alerta" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4.5M12 17.2v.3" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-olho" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-sino" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16ZM10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-ajuda" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.3 2.4c-.5.2-.8.7-.8 1.2v.6M12 16.8v.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5L8 5.5Z" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-onda" viewBox="0 0 24 24"><path d="M2 12c2.5 0 2.5-6 5-6s2.5 12 5 12 2.5-12 5-12 2.5 6 5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-vela" viewBox="0 0 24 24"><path d="M12 2v5M12 17v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="7.5" y="7" width="9" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-fechar" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div id="faixaDemo" class="faixa-demo" hidden>
+  <strong>DEMONSTRAÇÃO · dados simulados</strong>
+  <span>Nada aqui é mercado real.</span>
+  <nav id="demoCenarios" aria-label="Cenários de demonstração"></nav>
+</div>
+
+<!-- ============================================================ topo -->
+<header class="topo">
+  <a class="logo" href="/" aria-label="Limiar, página inicial">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12" fill="none" stroke="var(--marca)" stroke-width="3" stroke-dasharray="56 100" stroke-linecap="round" transform="rotate(-90 16 16)"/><rect x="6" y="14.7" width="20" height="2.6" rx="1.3" fill="var(--texto)"/></svg>
+    <span>Limiar</span>
+  </a>
+
+  <button class="chip-ativo" id="btnAtivo" aria-haspopup="dialog" data-tour="ativo">
+    <span class="chip-rotulo">Ativo</span>
+    <b id="chipAtivo">Escolher</b>
+    <svg class="ic"><use href="#i-chevron"/></svg>
+  </button>
+  <button class="botao botao-marca" id="btnConectar"><svg class="ic"><use href="#i-play"/></svg><span>Conectar</span></button>
+
+  <div class="espaco"></div>
+
+  <div class="conexao" id="conexao" title="Conexão com a Deriv" role="status">
+    <i class="ponto" id="pontoDeriv"></i><span id="txtDeriv">Desconectado</span>
+  </div>
+
+  <div class="segmentado" role="group" aria-label="Modo de visualização" data-tour="modos">
+    <button id="btnSimples" class="on" aria-pressed="true">Simples</button>
+    <button id="btnDetalhado" aria-pressed="false">Detalhado</button>
+  </div>
+  <button class="botao botao-icone" id="btnObs" aria-pressed="false" title="Modo observação: mostra a melhor candidata quando nenhuma estratégia está comprovada (não é recomendação)">
+    <svg class="ic"><use href="#i-olho"/></svg><span class="rotulo-largo">Observação</span>
+  </button>
+  <button class="botao botao-icone" id="btnAlertas" aria-haspopup="dialog" title="Sons e alertas" data-tour="alertas">
+    <svg class="ic"><use href="#i-sino"/></svg><span class="rotulo-largo">Alertas</span>
+  </button>
+  <button class="botao botao-icone" id="btnTour" title="Como ler esta tela"><svg class="ic"><use href="#i-ajuda"/></svg></button>
+</header>
+
+<main class="palco">
+  <!-- ============================================================ veredito -->
+  <section class="veredito INICIO" id="veredito" aria-live="polite" data-tour="veredito">
+    <div class="v-brilho" aria-hidden="true"></div>
+    <div class="v-corpo">
+      <div class="v-sobre"><span id="vContexto">Agora</span><span class="fita" id="vFita" hidden></span></div>
+      <div class="v-linha-titulo">
+        <span class="v-icone" id="vIcone" aria-hidden="true"><svg><use href="#i-play"/></svg></span>
+        <h1 class="v-titulo" id="vTitulo">Escolha um ativo para começar</h1>
+        <span class="v-direcao" id="vDirecao" hidden></span>
+      </div>
+      <p class="v-frase" id="vFrase">Toque em <b>Conectar</b>. O Limiar analisa o histórico e só sugere entrada quando uma estratégia tem vantagem comprovada.</p>
+
+      <div class="v-prob" id="vProb" hidden>
+        <div class="v-prob-num">
+          <span class="v-prob-rotulo">Probabilidade estimada <button class="q" data-dica="Taxa de acerto desta estratégia nas últimas velas, calculada a partir do histórico. A faixa mostra a margem de erro (95% de confiança). Não é previsão nem promessa.">?</button></span>
+          <span class="v-prob-valor"><b id="vProbValor">—</b><small id="vProbFaixa"></small></span>
+        </div>
+        <div class="faixa-prob grande" id="vFaixa" aria-hidden="true"></div>
+        <ul class="v-fatos">
+          <li id="vAmostra"></li>
+          <li id="vBreakEven"></li>
+          <li id="vEstrategia"></li>
+        </ul>
+        <div class="v-avisos" id="vAvisos"></div>
+      </div>
+      <button class="botao botao-marca grande" id="vAcao">Escolher ativo e conectar</button>
+    </div>
+
+    <div class="anel" id="anel" aria-label="Tempo da vela">
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle class="anel-trilho" cx="100" cy="100" r="88"/>
+        <circle class="anel-progresso" id="anelProgresso" cx="100" cy="100" r="88"/>
+      </svg>
+      <div class="anel-centro">
+        <span class="anel-tempo" id="tempo">--:--</span>
+        <span class="anel-rotulo" id="tempoRotulo">vela fecha em</span>
+      </div>
+    </div>
+  </section>
+
+  <p class="resumo-mercado" id="resumoSimples"><svg class="ic"><use href="#i-onda"/></svg><span id="resumoTexto">O resumo do mercado aparece depois de conectar.</span></p>
+
+  <!-- ============================================================ gráfico + top 3 -->
+  <div class="grade">
+    <section class="cartao grafico-cartao" id="cartaoGrafico" data-tour="grafico">
+      <header class="cartao-topo">
+        <div class="legenda"><b id="lgAtivo">Gráfico</b><span class="numero" id="lgPreco"></span></div>
+        <label class="interruptor"><input type="checkbox" id="chkTodos"><span>Mostrar todos os sinais</span></label>
+      </header>
+      <div class="grafico-area">
+        <div id="grafico"></div>
+        <div class="linha-entrada" id="linhaEntrada" hidden><span id="linhaEntradaTxt"></span></div>
+        <div class="vazio" id="vazio">Conecte para ver o gráfico ao vivo.</div>
+      </div>
+      <footer class="grafico-legenda">
+        <span><i class="marca-princ">★</i> sinal principal</span>
+        <span><i class="marca-lider"></i> sinais da estratégia líder</span>
+        <span><i class="marca-linha"></i> próxima vela</span>
+      </footer>
+    </section>
+
+    <section class="cartao top" id="cartaoTop" data-tour="top">
+      <header class="cartao-topo">
+        <h2>Top 3 ativos agora <button class="q" id="qTop" data-dica="">?</button></h2>
+        <small id="topInfo"></small>
+      </header>
+      <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
+    </section>
+  </div>
+
+  <!-- ============================================================ painéis do modo detalhado -->
+  <div class="grade so-detalhado">
+    <section class="cartao ranking" id="cartaoRanking">
+      <header class="cartao-topo">
+        <div>
+          <h2>Quem está acertando mais</h2>
+          <p class="sub" id="rkSub">Acerto estimado nas últimas 500 velas. A faixa é a margem de erro; a linha é o mínimo para lucrar.</p>
+        </div>
+        <div class="rk-escala" aria-hidden="true"><i class="rk-esc-faixa"></i>margem de erro <i class="rk-esc-be"></i>mínimo p/ lucrar</div>
+      </header>
+      <ol class="rk-lista" id="rkLista"><li class="vazio-txt">Conecte para calcular.</li></ol>
+      <details class="detalhes">
+        <summary>Ver números completos e escolher estratégias</summary>
+        <p class="sub" id="rkCriterio"></p>
+        <div class="tabela-rolagem"><table class="tabela" id="rkTabela"></table></div>
+        <p class="sub">Desmarcar uma estratégia tira ela do veredito e do cálculo de conflito. Com 11 estratégias testadas, uma pode passar no critério por sorte; confirme com <code>python validar.py</code>.</p>
+      </details>
+    </section>
+
+    <div class="coluna">
+      <section class="cartao mercado" id="cartaoMercado">
+        <header class="cartao-topo"><h2>Mercado em palavras simples</h2><small id="mAtivo"></small></header>
+        <div class="m-cartoes">
+          <div class="m-cartao" id="mTend">
+            <span class="m-rotulo">Tendência</span>
+            <span class="m-valor"><svg class="ic"><use href="#i-lado"/></svg><b>—</b></span>
+            <span class="medidor" data-n="0"><i></i><i></i><i></i></span>
+            <small class="m-extra">força —</small>
+          </div>
+          <div class="m-cartao" id="mMov">
+            <span class="m-rotulo">Movimento</span>
+            <span class="m-valor"><svg class="ic"><use href="#i-onda"/></svg><b>—</b></span>
+            <span class="medidor" data-n="0"><i></i><i></i><i></i></span>
+            <small class="m-extra">&nbsp;</small>
+          </div>
+          <div class="m-cartao" id="mVela">
+            <span class="m-rotulo">Vela atual</span>
+            <span class="m-valor"><svg class="ic"><use href="#i-vela"/></svg><b>—</b></span>
+            <small class="m-extra">&nbsp;</small>
+          </div>
+        </div>
+        <h3 class="m-titulo">O que está acontecendo</h3>
+        <p class="m-frase" id="mFrase">—</p>
+        <details class="detalhes">
+          <summary>Ver detalhes técnicos</summary>
+          <dl class="tecnico" id="mTecnico"></dl>
+          <p class="sub" id="mCriterio"></p>
+          <h3 class="m-titulo">Todos os ativos varridos</h3>
+          <div class="tabela-rolagem"><table class="tabela" id="topTodos"></table></div>
+        </details>
+      </section>
+
+      <section class="cartao sessao-hist" id="cartaoSessao">
+        <header class="cartao-topo"><h2>Operações desta sessão</h2><small id="placar"></small></header>
+        <ol class="bolinhas" id="bolinhas"><li class="vazio-txt">Nenhuma operação ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado.</li></ol>
+        <p class="sub"><span class="bolinha mini principal"></span> contorno = sinal do veredito (ENTRAR AGORA). Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
+      </section>
+    </div>
+  </div>
+</main>
+
+<footer class="rodape-risco" role="note">
+  <svg class="ic"><use href="#i-alerta"/></svg>
+  <span><b>Ferramenta de estudo.</b> Nenhum sinal é garantia. Opções binárias podem causar perda total do valor investido.</span>
+</footer>
+
+<!-- ============================================================ diálogos -->
+<dialog class="dialogo" id="dlgAtivo" aria-labelledby="dlgAtivoTitulo">
+  <form method="dialog" class="dlg-corpo" id="formAtivo">
+    <header><h2 id="dlgAtivoTitulo">Escolher ativo</h2><button class="botao botao-icone" value="cancelar" aria-label="Fechar"><svg class="ic"><use href="#i-fechar"/></svg></button></header>
+    <label class="campo"><span>Mercado</span><select id="selMercado"><option>Carregando...</option></select></label>
+    <label class="campo"><span>Ativo</span><select id="selAtivo"></select></label>
+    <div class="campos-linha">
+      <label class="campo"><span>Tempo de cada vela</span><select id="selTf"></select></label>
+      <label class="campo" id="campoTfCustom" hidden><span>Personalizado</span><input id="inpTfCustom" type="text" placeholder="M7"></label>
+    </div>
+    <div class="campos-linha">
+      <label class="campo"><span>Expiração (velas) <button type="button" class="q" data-dica="Quantas velas a operação dura. 1 = termina no fechamento da vela de entrada.">?</button></span><input id="inpExp" type="number" min="1" value="1"></label>
+      <label class="campo"><span>Payout da corretora (%) <button type="button" class="q" data-dica="Quanto a corretora paga quando você acerta. Define o mínimo de acerto para lucrar (break-even): com 85%, é preciso acertar mais de 54,1%.">?</button></span><input id="inpPayout" type="number" min="1" max="500" value="85"></label>
+    </div>
+    <p class="sub" id="beInfo"></p>
+    <footer><button class="botao" value="cancelar">Cancelar</button><button class="botao botao-marca" value="conectar" id="btnDlgConectar">Conectar</button></footer>
+  </form>
+</dialog>
+
+<dialog class="dialogo" id="dlgAlertas" aria-labelledby="dlgAlertasTitulo">
+  <form method="dialog" class="dlg-corpo">
+    <header><h2 id="dlgAlertasTitulo">Sons e alertas</h2><button class="botao botao-icone" value="fechar" aria-label="Fechar"><svg class="ic"><use href="#i-fechar"/></svg></button></header>
+    <label class="interruptor grande"><input type="checkbox" id="chkSom"><span>Som ligado</span></label>
+    <label class="campo"><span>Volume <output id="volTxt"></output></span><input type="range" id="inpVolume" min="0" max="100" step="5"></label>
+    <div class="campos-linha">
+      <button type="button" class="botao" id="btnNotif">Permitir notificações</button>
+      <button type="button" class="botao botao-marca" id="btnTestar">Testar alertas</button>
+    </div>
+    <p class="sub">O teste toca o som de <b>preparo</b> (suave), o som de <b>entrada</b> e envia uma notificação do navegador. Notificações reais só aparecem quando a aba está em segundo plano. O modo observação nunca toca som de entrada.</p>
+  </form>
+</dialog>
+
+<div class="tour" id="tour" hidden>
+  <div class="tour-foco" id="tourFoco"></div>
+  <div class="tour-cartao" id="tourCartao" role="dialog" aria-modal="true" aria-labelledby="tourTitulo">
+    <small id="tourPasso"></small>
+    <h2 id="tourTitulo"></h2>
+    <p id="tourTexto"></p>
+    <footer><button class="botao" id="tourPular">Pular</button><span class="espaco"></span><button class="botao" id="tourVoltar">Voltar</button><button class="botao botao-marca" id="tourProximo">Próximo</button></footer>
+  </div>
+</div>
+
+<div class="dica" id="dica" role="tooltip" hidden></div>
+<div class="avisos" id="toasts" aria-live="assertive"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+/* =====================================================================================
+   LIMIAR · TEMA  —  troque a paleta e a tipografia SÓ AQUI.
+   Direção: "Observatório" (painel de instrumento noturno, uma cor de marca luminosa).
+   Regra: verde/vermelho são reservados para ALTA/BAIXA (COMPRA/VENDA) e sempre vêm com ícone + texto.
+   ===================================================================================== */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650;12..96,800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+:root {
+  /* ---- tipografia ---- */
+  --fonte-titulo: "Bricolage Grotesque", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --fonte-texto: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --fonte-numero: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* ---- superfícies (tinta com um toque violeta) ---- */
+  --fundo: #09090f;
+  --fundo-brilho: #15122a;           /* halo do topo da página */
+  --superficie: #12121c;
+  --superficie-2: #191926;
+  --superficie-3: #222233;
+  --linha: rgba(236, 232, 255, .07);
+  --linha-forte: rgba(236, 232, 255, .14);
+
+  /* ---- texto ---- */
+  --texto: #efedf8;
+  --texto-2: #b0adc7;
+  --texto-3: #807d9a;              /* mínimo AA sobre --superficie */
+
+  /* ---- marca (íris) ---- */
+  --marca: #a990ff;
+  --marca-forte: #8d6bff;
+  --marca-suave: rgba(169, 144, 255, .14);
+  --marca-texto: #120c2b;          /* texto sobre a marca */
+
+  /* ---- direção (só ALTA/BAIXA) ---- */
+  --alta: #2fd88a;
+  --alta-suave: rgba(47, 216, 138, .14);
+  --alta-texto: #04140c;
+  --baixa: #ff5a6e;
+  --baixa-suave: rgba(255, 90, 110, .14);
+  --baixa-texto: #1d0408;
+
+  /* ---- estados ---- */
+  --prep: #ffbb4d;                 /* se preparando */
+  --prep-suave: rgba(255, 187, 77, .13);
+  --conf: #ff8b3d;                 /* conflito */
+  --conf-suave: rgba(255, 139, 61, .13);
+  --obs: #9d9bb2;                  /* observação: neutro... */
+  --obs-destaque: #ffbb4d;         /* ...com fita âmbar */
+  --obs-suave: rgba(157, 155, 178, .10);
+
+  /* ---- forma ---- */
+  --raio-g: 26px;
+  --raio: 16px;
+  --raio-p: 10px;
+  --sombra: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 18px 40px -18px rgba(0, 0, 0, .7);
+  --sombra-flutuante: 0 24px 60px -12px rgba(0, 0, 0, .75), 0 0 0 1px var(--linha-forte);
+
+  /* ---- movimento ---- */
+  --rapido: .16s;
+  --medio: .32s;
+  --curva: cubic-bezier(.2, .8, .2, 1);
+
+  /* ---- gráfico (lido pelo app.js) ---- */
+  --grafico-fundo: #12121c;
+  --grafico-grade: rgba(236, 232, 255, .045);
+  --grafico-texto: #807d9a;
+
+  color-scheme: dark;
+}
