@@ -2,14 +2,26 @@
    FAROL · TEMA  —  troque a paleta e a tipografia SÓ AQUI.
    Direção: "Observatório" (painel de instrumento noturno, uma cor de marca luminosa).
    Regra: verde/vermelho são reservados para ALTA/BAIXA (COMPRA/VENDA) e sempre vêm com ícone + texto.
+   Contraste (WCAG): texto-3 ≥ 5,2:1 em todas as superfícies; texto ≥ 13,5:1.
    ===================================================================================== */
 @import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650;12..96,800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+/* Tamanho da letra (botões P/M/G, salvo no navegador). 1rem = base; P garante os mínimos:
+   texto de leitura ≥ 13px (--fs-pequeno) e legendas ≥ 12px (--fs-legenda). */
+html[data-letra="p"] { font-size: 16px; }
+html, html[data-letra="m"] { font-size: 17px; }
+html[data-letra="g"] { font-size: 19px; }
 
 :root {
   /* ---- tipografia ---- */
   --fonte-titulo: "Bricolage Grotesque", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --fonte-texto: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --fonte-numero: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --fs-legenda: .75rem;      /* 12px no P */
+  --fs-pequeno: .8125rem;    /* 13px no P: mínimo para leitura */
+  --fs-texto: .9375rem;
+  --fs-destaque: 1.0625rem;
+  --fs-h2: 1.125rem;
 
   /* ---- superfícies (tinta com um toque violeta) ---- */
   --fundo: #09090f;
@@ -17,39 +29,40 @@
   --superficie: #12121c;
   --superficie-2: #191926;
   --superficie-3: #222233;
-  --linha: rgba(236, 232, 255, .07);
-  --linha-forte: rgba(236, 232, 255, .14);
+  --linha: rgba(236, 232, 255, .08);
+  --linha-forte: rgba(236, 232, 255, .16);
 
   /* ---- texto ---- */
   --texto: #efedf8;
-  --texto-2: #b0adc7;
-  --texto-3: #807d9a;              /* mínimo AA sobre --superficie */
+  --texto-2: #b9b6d0;
+  --texto-3: #9592b0;              /* ≥ 5,2:1 até sobre --superficie-3 */
 
   /* ---- marca (íris) ---- */
   --marca: #a990ff;
   --marca-forte: #8d6bff;
+  --marca-clara: #bba6ff;
   --marca-suave: rgba(169, 144, 255, .14);
   --marca-texto: #120c2b;          /* texto sobre a marca */
 
   /* ---- direção (só ALTA/BAIXA) ---- */
   --alta: #2fd88a;
-  --alta-suave: rgba(47, 216, 138, .14);
+  --alta-suave: rgba(47, 216, 138, .16);
   --alta-texto: #04140c;
   --baixa: #ff5a6e;
-  --baixa-suave: rgba(255, 90, 110, .14);
+  --baixa-suave: rgba(255, 90, 110, .16);
   --baixa-texto: #1d0408;
 
   /* ---- estados ---- */
-  --prep: #ffbb4d;                 /* se preparando */
-  --prep-suave: rgba(255, 187, 77, .13);
+  --prep: #ffbb4d;                 /* se preparando / se formando */
+  --prep-suave: rgba(255, 187, 77, .14);
   --conf: #ff8b3d;                 /* conflito */
-  --conf-suave: rgba(255, 139, 61, .13);
-  --obs: #9d9bb2;                  /* observação: neutro... */
+  --conf-suave: rgba(255, 139, 61, .14);
+  --obs: #a3a1ba;                  /* observação: neutro... */
   --obs-destaque: #ffbb4d;         /* ...com fita âmbar */
   --obs-suave: rgba(157, 155, 178, .10);
 
   /* ---- forma ---- */
-  --raio-g: 26px;
+  --raio-g: 24px;
   --raio: 16px;
   --raio-p: 10px;
   --sombra: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 18px 40px -18px rgba(0, 0, 0, .7);
@@ -63,7 +76,7 @@
   /* ---- gráfico (lido pelo app.js) ---- */
   --grafico-fundo: #12121c;
   --grafico-grade: rgba(236, 232, 255, .045);
-  --grafico-texto: #807d9a;
+  --grafico-texto: #9592b0;
 
   color-scheme: dark;
 }

@@ -60,6 +60,16 @@ def test_sessao_ao_vivo_completa(monkeypatch, tmp_path):
                 assert not fechado["elegivel"] and all(x["simbolo"] != "frxFECHADO" for x in top["itens"])
                 assert top["regra"] and nav.ultimo("estado")["principal"]["estado"]
                 assert all(x["spark"] and x["porque"] for x in top["itens"])
+                # cada mini gráfico usa as velas do PRÓPRIO ativo (eram iguais por causa do Deriv falso)
+                for x in top["todos"]:
+                    if x["spark"]:
+                        serie = next(sv for (sim, _), sv in h.series.items() if sim == x["simbolo"])
+                        fechadas, _ = s._velas(serie)
+                        closes = [float(v) for v in fechadas["close"].tail(len(x["spark"]) + 5)]
+                        n = len(x["spark"])   # trecho contínuo (uma vela pode ter fechado depois da mensagem)
+                        assert any(closes[i:i + n] == x["spark"] for i in range(len(closes) - n + 1))
+                sparks = [tuple(x["spark"]) for x in top["todos"] if x["spark"]]
+                assert len(sparks) >= 2 and len(set(sparks)) == len(sparks), "mini gráficos idênticos"
                 # veredito em linguagem simples, em toda mensagem de estado e de decisão
                 ver = nav.ultimo("estado")["veredito"]
                 assert ver["estado"] in ("ENTRAR", "PREPARANDO", "AGUARDAR", "CONFLITO") and ver["frase"]

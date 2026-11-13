@@ -41,6 +41,7 @@ PROGRESSO_PASSO_ATR = 0.05       # resolução da busca da distância até o gat
 N_HISTORICO = 3000            # velas do timeframe carregadas por ativo ("histórico completo" ao vivo)
 N_VELAS_GRAFICO = 600         # velas enviadas ao gráfico
 N_VELAS_PREVIA = 400          # velas usadas na prévia "se a vela fechasse agora"
+N_SPARK = 60                  # fechamentos de cada ativo no mini gráfico do Top 3
 FOLGA_FECHAMENTO = 1.0        # s após o fim da vela para considerá-la fechada (ticks atrasados)
 INTERVALO_MIN_REQUISICOES = 0.35   # s entre requisições na conexão da Deriv
 CONFLITO_MIN_OPERACOES = 30   # estratégias com >= N ops e acerto acima do break-even contam para CONFLITO

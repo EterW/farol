@@ -150,19 +150,8 @@ def mensagens(cenario: str, agora: float | None = None) -> list[dict]:
     for k, (sim, seed, tnd) in enumerate((("frxEURUSD", 7, tendencia or 0.00003), ("frxGBPJPY", 21, -0.00005),
                                           ("frxAUDUSD", 33, 0.0))):
         d = df if k == 0 else _velas(241, seed, tnd, inicio).iloc[:-1]
-        a = mercado.analisar(d)
         r_ativo = rk if (k == 0 and comprovada) else None
-        pts = scanner.pontuar(a, r_ativo, True)
-        melhor = None
-        if r_ativo:
-            l = next(x for x in rk["linhas"] if x["id"] == rk["melhor"])
-            melhor = {"id": l["id"], "nome": l["nome"], "acerto": l["janela"]["acerto"],
-                      "ic_inf": l["janela"]["ic_inf"], "operacoes": l["janela"]["operacoes"]}
-        itens.append({"simbolo": sim, "aberto": True, **pts, "tendencia": a.get("tendencia"),
-                      "forca": a.get("forca"), "adx": a.get("adx"), "atr_percentil": a.get("atr_percentil"),
-                      "volatilidade": a.get("volatilidade"), "melhor_estrategia": melhor, "velas": len(d),
-                      "resumo": a.get("resumo"), "porque": scanner.porque(a, pts["componentes"], melhor),
-                      "spark": [float(x) for x in d["close"].tail(scanner.N_SPARK)]})
+        itens.append(scanner.montar_item(sim, d, mercado.analisar(d), r_ativo, True))
     itens = scanner.ordenar(itens)
 
     # operações já resolvidas nesta sessão (bolinhas de WIN/LOSS)

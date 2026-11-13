@@ -109,23 +109,34 @@ def _analise(**k):
 
 
 def test_pontuacao_regra_explicita():
-    r = scanner.pontuar(_analise(), None, aberto=True)
-    assert r["componentes"] == {"volatilidade": 25, "tendencia": 25, "estrategia": 0} and r["pontos"] == 50
+    r = scanner.pontuar(_analise(), None, aberto=True)          # ADX 30, percentil 50
+    assert r["componentes"] == {"volatilidade": 25.0, "tendencia": 18.8, "estrategia": 0.0}
+    assert r["pontos"] == 43.8 and [e["nome"] for e in r["explicacao"]] == ["Movimento", "Tendência", "Estratégia"]
     assert scanner.pontuar(_analise(), None, aberto=False)["elegivel"] is False
     r = scanner.pontuar(_analise(tendencia="LATERAL", atr_percentil=95), None, True)
-    assert r["componentes"] == {"volatilidade": 10, "tendencia": 0, "estrategia": 0}
-    assert scanner.pontuar(_analise(adx=22), None, True)["componentes"]["tendencia"] == 12
+    assert r["componentes"]["volatilidade"] == 5.0 and r["componentes"]["tendencia"] == 7.5   # lateral = 40%
+    assert scanner.pontuar(_analise(adx=15), None, True)["componentes"]["tendencia"] == 0.0
+    assert scanner.pontuar(_analise(adx=40), None, True)["componentes"]["tendencia"] == 25.0
     ranking = {"melhor": "x", "break_even": 0.54,
-               "linhas": [{"id": "x", "janela": {"ic_inf": 0.565}}]}  # folga 2,5 p.p. -> +10
-    assert scanner.pontuar(_analise(), ranking, True)["componentes"]["estrategia"] == 40
+               "linhas": [{"id": "x", "nome": "X", "janela": {"ic_inf": 0.565}}]}  # folga 2,5 p.p. -> +10
+    assert scanner.pontuar(_analise(), ranking, True)["componentes"]["estrategia"] == 40.0
 
 
-def test_ordenar_top():
-    res = [{"simbolo": "A", "elegivel": True, "pontos": 50, "adx": 20},
+def test_pontuacao_diferencia_ativos_parecidos():
+    """Antes, quase todo ativo 'normal' empatava em 50. Agora diferenças pequenas aparecem na nota."""
+    notas = {scanner.pontuar(_analise(adx=adx, atr_percentil=p), None, True)["pontos"]
+             for adx, p in [(26, 50), (28, 50), (26, 30), (31, 85), (22, 60)]}
+    assert len(notas) == 5
+
+
+def test_ordenar_top_com_desempate_explicito():
+    res = [{"simbolo": "A", "elegivel": True, "pontos": 50.0, "adx": 20, "atr_percentil": 50},
            {"simbolo": "B", "elegivel": False, "pontos": 0, "adx": 40},
-           {"simbolo": "C", "elegivel": True, "pontos": 50, "adx": 30},
-           {"simbolo": "D", "elegivel": True, "pontos": 75, "adx": 10}]
-    assert [r["simbolo"] for r in scanner.ordenar(res)] == ["D", "C", "A", "B"]
+           {"simbolo": "C", "elegivel": True, "pontos": 50.0, "adx": 30, "atr_percentil": 50},
+           {"simbolo": "D", "elegivel": True, "pontos": 75.0, "adx": 10, "atr_percentil": 50},
+           {"simbolo": "E", "elegivel": True, "pontos": 50.0, "adx": 20, "atr_percentil": 54},
+           {"simbolo": "F", "elegivel": True, "pontos": 50.0, "adx": 20, "atr_percentil": 54}]
+    assert [r["simbolo"] for r in scanner.ordenar(res)] == ["D", "C", "E", "F", "A", "B"]
 
 
 def test_avaliar_ativo_real():

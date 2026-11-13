@@ -1,94 +1,155 @@
-/* Farol · modo ao vivo.
-   O navegador NÃO decide nada: o veredito (ENTRAR / SE PREPARANDO / AGUARDAR / CONFLITO / OBSERVAÇÃO)
-   chega pronto do servidor (binarias/veredito.py), com probabilidade estimada, faixa, amostra e break-even.
-   Aqui só desenhamos, atualizando apenas o que mudou. */
+/* Farol · modo ao vivo (navegador).
+   O navegador NÃO decide nada: veredito, estratégia líder, progresso de formação e avisos chegam prontos
+   do servidor (binarias/veredito.py e binarias/avisos.py). Aqui só desenhamos e tocamos o que vier,
+   atualizando apenas o que mudou. Tudo fica dentro desta função (sem variáveis globais). */
+(() => {
 "use strict";
 
 // ================================================================== utilidades
 const $ = (id) => document.getElementById(id);
-const el = (tag, cls, texto) => { const e = document.createElement(tag); if (cls) e.className = cls; if (texto !== undefined) e.textContent = texto; return e; };
-const svgUso = (id, cls = "ic") => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("class", cls); s.setAttribute("aria-hidden", "true"); const u = document.createElementNS("http://www.w3.org/2000/svg", "use"); u.setAttribute("href", "#" + id); s.appendChild(u); return s; };
-const store = {
+const el = (tag, cls, texto) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+};
+const NS = "http://www.w3.org/2000/svg";
+const svgUso = (id, cls = "ic") => {
+  const s = document.createElementNS(NS, "svg");
+  s.setAttribute("class", cls); s.setAttribute("aria-hidden", "true");
+  const u = document.createElementNS(NS, "use"); u.setAttribute("href", "#" + id); s.appendChild(u);
+  return s;
+};
+const store = {   // localStorage pode não existir (modo privado): a página funciona sem ele
   get(k, padrao) { try { const v = localStorage.getItem(k); return v === null ? padrao : JSON.parse(v); } catch { return padrao; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem armazenamento: só não lembra */ } },
 };
 const setTxt = (e, t) => { if (e && e.textContent !== t) e.textContent = t; };
-const num = (v, casas = 2) => v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
-const pct = (v, casas = 0) => v === null || v === undefined ? "—" : num(100 * v, casas) + "%";
+const num = (v, casas = 2) => (v === null || v === undefined ? "—"
+  : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas }));
+const pct = (v, casas = 0) => (v === null || v === undefined ? "—" : num(100 * v, casas) + "%");
 const comSinal = (v, casas = 2) => (v > 0 ? "+" : "") + num(v, casas);
 const fmtHora = (t) => new Date(t * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+const css = (nome) => getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
 const FUSO = -new Date().getTimezoneOffset() * 60;   // gráfico em horário local
 const ACAO = { CALL: "COMPRA", PUT: "VENDA" };
+const SETA = { CALL: "▲", PUT: "▼" };
 const ICONE_DIR = { CALL: "i-cima", PUT: "i-baixo" };
-const css = (nome) => getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
 const params = new URLSearchParams(location.search);
 const DEMO = params.get("demo");
+const nomeAtivo = (s) => S.nomes[s] || (s || "").replace(/^frx/, "").replace(/^([A-Z]{3})([A-Z]{3})$/, "$1/$2");
 
-// ================================================================== estado da página
-let CONFIG = null, ATIVOS = [], NOMES = {}, ws = null, conectado = false;
-let ativas = new Set(), simboloAtual = null, tfAtual = "", casas = 5;
-let fechaEm = null, offsetRelogio = 0, segVela = 60, janelaEntrada = 15;
-let estadosEst = {}, RANKING = null, VEREDITO = null, ultimaAnalise = null;
-let somLigado = store.get("som", true), volume = store.get("volume", 70);
-let modoObs = store.get("observacao", false), mostrarTodos = store.get("todosSinais", false);
-let modo = params.get("modo") || store.get("modo", "simples");
+// ================================================================== estado da página e preferências salvas
+const S = {
+  config: null, ativos: [], nomes: {}, ws: null, conectado: false,
+  ativas: new Set(), simbolo: null, tf: "", casas: 5, seg: 60, janelaEntrada: 15,
+  fechaEm: null, offset: 0, estados: {}, ranking: null, veredito: null, analise: null,
+  limite: 70, lider: null, barras: [], sinais: [], bolinhas: {}, rkAbertos: new Set(), rkAgora: {},
+  placar: { WIN: 0, LOSS: 0, EMPATE: 0 }, placarFarol: { WIN: 0, LOSS: 0, EMPATE: 0 },
+};
+const P = {
+  som: store.get("som", true), volume: store.get("volume", 70), obs: store.get("observacao", false),
+  avisarObs: store.get("avisarObs", false), limite: store.get("limite", null),
+  todos: store.get("todosSinais.v2", false),   // novo nome: o padrão voltou a ser DESLIGADO
+  modo: params.get("modo") || store.get("modo", "simples"),
+  letra: params.get("letra") || store.get("letra", "m"),
+};
 
 // ================================================================== gráfico (a página funciona mesmo sem ele)
-let chart = null, serie = { setData() {}, update() {}, setMarkers() {}, applyOptions() {} };
-let barras = [], sinaisMarcados = [], assinaturaMarcas = "";
-try {
-  chart = LightweightCharts.createChart($("grafico"), {
-    autoSize: true,
-    layout: { attributionLogo: true, background: { type: "solid", color: css("--grafico-fundo") }, textColor: css("--grafico-texto"), fontSize: 12, fontFamily: css("--fonte-numero") },
-    grid: { vertLines: { color: css("--grafico-grade") }, horzLines: { color: css("--grafico-grade") } },
-    rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.14, bottom: 0.08 } },
-    timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 9 },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal,
-                 vertLine: { color: css("--linha-forte"), labelBackgroundColor: css("--superficie-3") },
-                 horzLine: { color: css("--linha-forte"), labelBackgroundColor: css("--superficie-3") } },
-  });
-  serie = chart.addCandlestickSeries({ upColor: css("--alta"), downColor: css("--baixa"), borderVisible: false,
-                                       wickUpColor: css("--alta"), wickDownColor: css("--baixa"), priceLineColor: css("--marca") });
-  chart.timeScale().subscribeVisibleLogicalRangeChange(() => posicionarLinhaEntrada());
-} catch (e) {
-  $("vazio").textContent = "Não foi possível carregar o gráfico (sem internet?). O resto da tela continua funcionando.";
-}
-const barra = (v) => ({ time: v[0] + FUSO, open: v[1], high: v[2], low: v[3], close: v[4] });
-
-function atualizarBarra(v) {
-  const b = barra(v), ult = barras[barras.length - 1];
-  if (!ult || b.time > ult.time) { barras.push(b); serie.update(b); }
-  else if (b.time === ult.time) { barras[barras.length - 1] = b; serie.update(b); }
-  else {   // versão final de uma vela já ultrapassada: o gráfico não aceita update()
-    const i = barras.findIndex((x) => x.time === b.time);
-    if (i >= 0) { barras[i] = b; serie.setData(barras); assinaturaMarcas = ""; desenharMarcadores(); }
+const G = { chart: null, serie: null, assinatura: "", grupos: new Map() };
+const TAMANHO_FONTE_GRAFICO = { p: 12, m: 13, g: 14 };
+function criarGrafico() {
+  try {
+    G.chart = LightweightCharts.createChart($("grafico"), {
+      autoSize: true,
+      layout: { attributionLogo: true, background: { type: "solid", color: css("--grafico-fundo") }, textColor: css("--grafico-texto"),
+                fontSize: TAMANHO_FONTE_GRAFICO[P.letra] || 13, fontFamily: css("--fonte-numero") },
+      grid: { vertLines: { color: css("--grafico-grade") }, horzLines: { color: css("--grafico-grade") } },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.14, bottom: 0.1 } },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 12 },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal,
+                   vertLine: { color: css("--linha-forte"), labelBackgroundColor: css("--superficie-3") },
+                   horzLine: { color: css("--linha-forte"), labelBackgroundColor: css("--superficie-3") } },
+    });
+    G.serie = G.chart.addCandlestickSeries({ upColor: css("--alta"), downColor: css("--baixa"), borderVisible: false,
+                                             wickUpColor: css("--alta"), wickDownColor: css("--baixa"), priceLineColor: css("--marca") });
+    G.chart.timeScale().subscribeVisibleLogicalRangeChange(posicionarLinhaEntrada);
+    G.chart.subscribeCrosshairMove(dicaDoGrafico);
+  } catch (e) {
+    G.chart = G.serie = null;
+    $("vazio").textContent = "Não foi possível carregar o gráfico (sem internet?). O resto da tela continua funcionando.";
   }
 }
-function lider() { return (VEREDITO && VEREDITO.estrategia) || (RANKING && RANKING.melhor) || null; }
+const barra = (v) => ({ time: v[0] + FUSO, open: v[1], high: v[2], low: v[3], close: v[4] });
+function mostrarUltimasVelas() {
+  if (!G.chart || !S.barras.length) return;
+  const n = S.barras.length, k = innerWidth < 720 ? 45 : 90;   // poucas velas visíveis: o gráfico respira
+  G.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - k), to: n + 4 });
+}
+function atualizarBarra(v) {
+  if (!G.serie) return;
+  const b = barra(v), ult = S.barras[S.barras.length - 1];
+  if (!ult || b.time > ult.time) { S.barras.push(b); G.serie.update(b); }
+  else if (b.time === ult.time) { S.barras[S.barras.length - 1] = b; G.serie.update(b); }
+  else {   // versão final de uma vela já ultrapassada: o gráfico não aceita update()
+    const i = S.barras.findIndex((x) => x.time === b.time);
+    if (i >= 0) { S.barras[i] = b; G.serie.setData(S.barras); G.assinatura = ""; desenharMarcadores(); }
+  }
+}
+const idLider = () => S.lider || (S.veredito && S.veredito.comprovada ? S.veredito.estrategia : null);
+const porId = (id) => (S.config && S.config.estrategias.find((e) => e.id === id)) || { nome: id, sigla: "?", simples: "", descricao: "" };
+
+/* Marcadores agrupados por vela: uma seta só por vela, com "×N" quando há vários sinais;
+   a lista completa aparece ao passar o mouse (dicaDoGrafico). */
 function desenharMarcadores() {
-  if (!CONFIG) return;
-  const sig = Object.fromEntries(CONFIG.estrategias.map((e) => [e.id, e.sigla]));
-  const id = lider();
-  const lista = sinaisMarcados.filter((s) => s.principal || s.id === id || (mostrarTodos && (modoObs || ativas.has(s.id))));
-  const chave = `${id}|${mostrarTodos}|${lista.length}|${lista.length ? lista[lista.length - 1].t : 0}`;
-  if (chave === assinaturaMarcas) return;
-  assinaturaMarcas = chave;
+  if (!G.serie || !S.config) return;
+  const lider = idLider();
+  const visiveis = S.sinais.filter((s) => s.principal || s.id === lider || (P.todos && (P.obs || S.ativas.has(s.id))));
+  const chave = `${lider}|${P.todos}|${visiveis.length}|${visiveis.length ? visiveis[visiveis.length - 1].t : 0}`;
+  if (chave === G.assinatura) return;
+  G.assinatura = chave;
+  G.grupos = new Map();
+  for (const s of visiveis) {
+    const t = s.t + FUSO;
+    if (!G.grupos.has(t)) G.grupos.set(t, []);
+    G.grupos.get(t).push(s);
+  }
   const alta = css("--alta"), baixa = css("--baixa"), neutro = css("--texto-3");
-  const m = lista.map((s) => {
-    const cor = s.principal || s.id === id ? (s.dir === "CALL" ? alta : baixa) : neutro;
-    return { time: s.t + FUSO, position: s.dir === "CALL" ? "belowBar" : "aboveBar", color: cor,
-             shape: s.dir === "CALL" ? "arrowUp" : "arrowDown", size: s.principal ? 1.6 : 1,
-             text: s.principal ? "★" : (s.id === id ? "" : sig[s.id] || "") };
-  }).sort((a, b) => a.time - b.time);
-  serie.setMarkers(m);
+  const marcas = [...G.grupos.entries()].sort((a, b) => a[0] - b[0]).map(([t, lista]) => {
+    const princ = lista.find((s) => s.principal), daLider = lista.find((s) => s.id === lider), ref = princ || daLider;
+    const direcoes = new Set(lista.map((s) => s.dir));
+    const dir = ref ? ref.dir : (direcoes.size === 1 ? lista[0].dir : null);
+    const texto = (princ ? "★" : "") + (lista.length > 1 ? `×${lista.length}` : "");
+    if (!dir) return { time: t, position: "aboveBar", color: neutro, shape: "circle", size: 0.8, text: texto };
+    return { time: t, position: dir === "CALL" ? "belowBar" : "aboveBar", color: ref ? (dir === "CALL" ? alta : baixa) : neutro,
+             shape: dir === "CALL" ? "arrowUp" : "arrowDown", size: princ ? 1.6 : 1, text: texto };
+  });
+  G.serie.setMarkers(marcas);
+}
+function dicaDoGrafico(p) {
+  const caixa = $("dicaGrafico");
+  if (!p || !p.time || !p.point || !G.grupos.has(p.time)) { caixa.hidden = true; return; }
+  const lista = G.grupos.get(p.time), lider = idLider();
+  const ul = el("ul");
+  for (const s of lista) {
+    const e = porId(s.id);
+    const li = el("li", s.principal || s.id === lider ? s.dir : "", `${SETA[s.dir]} ${ACAO[s.dir]} · ${e.nome}${s.principal ? " (entrada avisada)" : s.id === lider ? " (líder)" : ""}`);
+    ul.appendChild(li);
+  }
+  caixa.replaceChildren(el("b", "", `${fmtHora(p.time - FUSO)} · ${lista.length} sinal${lista.length > 1 ? "is" : ""}`), ul);
+  caixa.hidden = false;
+  const area = $("grafico"), w = caixa.offsetWidth, h = caixa.offsetHeight;
+  caixa.style.left = `${Math.min(area.clientWidth - w - 8, p.point.x + 14)}px`;
+  caixa.style.top = `${Math.max(8, Math.min(area.clientHeight - h - 8, p.point.y - h / 2))}px`;
 }
 function posicionarLinhaEntrada() {
   const linha = $("linhaEntrada");
-  if (!chart || !barras.length || !fechaEm) { linha.hidden = true; return; }
+  if (!G.chart || !S.barras.length || !S.fechaEm) { linha.hidden = true; return; }
   // logicalToCoordinate só aceita índices inteiros: fim da vela atual = centro dela + meio espaçamento
-  const ts = chart.timeScale(), n = barras.length;
+  const ts = G.chart.timeScale(), n = S.barras.length;
   const xUlt = ts.logicalToCoordinate(n - 1), xAnt = ts.logicalToCoordinate(n - 2);
-  const largura = $("grafico").clientWidth - chart.priceScale("right").width();
+  const largura = $("grafico").clientWidth - G.chart.priceScale("right").width();
   if (xUlt === null || xAnt === null) { linha.hidden = true; return; }
   const x = xUlt + (xUlt - xAnt) / 2;
   if (x < 0 || x > largura) { linha.hidden = true; return; }
@@ -96,15 +157,15 @@ function posicionarLinhaEntrada() {
   linha.style.left = `${Math.round(x)}px`;
 }
 
-// ================================================================== sons, avisos e notificações
-let actx = null;
+// ================================================================== sons
+const A = { ctx: null, avisouFalha: false };
 function audio() {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  if (actx.state === "suspended") actx.resume();
-  return actx;
+  if (!A.ctx) A.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (A.ctx.state === "suspended") A.ctx.resume();
+  return A.ctx;
 }
 function tom(freq, inicio, dur, tipo = "sine", vol = 0.18) {
-  const ctx = audio(), t0 = ctx.currentTime + inicio, alvo = Math.max(0.0002, vol * (volume / 100));
+  const ctx = audio(), t0 = ctx.currentTime + inicio, alvo = Math.max(0.0002, vol * (P.volume / 100));
   const o = ctx.createOscillator(), g = ctx.createGain();
   o.type = tipo; o.frequency.value = freq;
   g.gain.setValueAtTime(0.0001, t0);
@@ -112,60 +173,89 @@ function tom(freq, inicio, dur, tipo = "sine", vol = 0.18) {
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   o.connect(g).connect(ctx.destination); o.start(t0); o.stop(t0 + dur + 0.03);
 }
-// `forcar`: toca mesmo com o som desligado (só o "Testar alertas" usa)
-function somPreparo(forcar) { if (!somLigado && !forcar) return; try { tom(523, 0, 0.32, "sine", 0.13); tom(659, 0.22, 0.45, "sine", 0.11); } catch {} }
-function somEntrada(dir, forcar) {
-  if (!somLigado && !forcar) return;
-  try {
-    const base = dir === "PUT" ? 784 : 659, passo = dir === "PUT" ? 0.84 : 1.19;
-    for (let i = 0; i < 3; i++) tom(base * Math.pow(passo, i), i * 0.13, 0.14, "triangle", 0.2);
-    tom(base * Math.pow(passo, 3), 0.42, 0.42, "triangle", 0.2);
-  } catch {}
+function arpejo(base, passo) {
+  for (let i = 0; i < 3; i++) tom(base * Math.pow(passo, i), i * 0.13, 0.14, "triangle", 0.2);
+  tom(base * Math.pow(passo, 3), 0.42, 0.42, "triangle", 0.2);
 }
-function aviso(titulo, texto, tipo = "", icone = "i-sino", duracao = 8000) {
+const SONS = {   // um som por tipo de aviso (os nomes vêm do servidor)
+  formando: () => { tom(523, 0, 0.32, "sine", 0.13); tom(659, 0.22, 0.45, "sine", 0.11); },
+  entrada_call: () => arpejo(659, 1.19),    // compra: sobe o tom
+  entrada_put: () => arpejo(784, 0.84),     // venda: desce o tom
+  resultado: () => { tom(880, 0, 0.18, "sine", 0.14); tom(1318, 0.12, 0.5, "sine", 0.1); },
+  observacao: () => { tom(330, 0, 0.28, "square", 0.05); tom(294, 0.3, 0.4, "square", 0.045); },
+};
+function tocar(nome, forcar = false) {
+  if ((!P.som && !forcar) || !SONS[nome]) return;
+  try { SONS[nome](); }
+  catch (e) {
+    if (!A.avisouFalha) { A.avisouFalha = true; toast("Som indisponível", "O navegador não deixou tocar o aviso sonoro.", "erro", "i-alerta"); }
+  }
+}
+
+// ================================================================== avisos na tela e notificações
+function toast(titulo, texto, tipo = "", icone = "i-sino", duracao = 8000) {
   const t = el("div", "aviso " + tipo);
   t.append(svgUso(icone), el("b", "", titulo), el("span", "", texto));
-  $("toasts").prepend(t);
+  const caixa = $("toasts");
+  caixa.prepend(t);
   setTimeout(() => t.remove(), duracao);
-  while ($("toasts").children.length > 4) $("toasts").lastChild.remove();
+  while (caixa.children.length > 4) caixa.lastChild.remove();
 }
 function notificar(titulo, texto, forcar = false) {
   if (!("Notification" in window) || Notification.permission !== "granted" || (!document.hidden && !forcar)) return false;
-  try { new Notification(titulo, { body: texto, tag: "farol", icon: "/static/marca/icone-192.png", badge: "/static/marca/icone-192.png", silent: true }); return true; } catch { return false; }
+  try {
+    new Notification(titulo, { body: texto, tag: "farol", icon: "/static/marca/icone-192.png", badge: "/static/marca/icone-192.png", silent: true });
+    return true;
+  } catch { return false; }   // alguns navegadores só permitem notificação via service worker
 }
-const nomeAtivo = (s) => NOMES[s] || (s || "").replace(/^frx/, "").replace(/^([A-Z]{3})([A-Z]{3})$/, "$1/$2");
+const ESTILO_AVISO = { formando: ["prep", "i-ampulheta"], conflito: ["conf", "i-alerta"], lider: ["discreto", "i-sino"],
+                       observacao: ["obs", "i-olho"], resultado: ["", "i-check"] };
+/* Aviso decidido no servidor (binarias/avisos.py): mostra o texto, toca o som indicado e notifica. */
+function mostrarAviso(a, forcar = false) {
+  let [tipo, icone] = ESTILO_AVISO[a.categoria] || ["", "i-sino"];
+  if (a.categoria === "entrada") { tipo = a.dir; icone = ICONE_DIR[a.dir]; }
+  if (a.categoria === "resultado") icone = /LOSS/.test(a.titulo) ? "i-x" : "i-check";
+  toast(a.titulo, a.texto, tipo, icone, a.categoria === "lider" ? 6000 : 10000);
+  if (DEMO && !forcar) return;   // demonstração: só mostra
+  if (a.som) tocar(a.som, forcar);
+  if (a.notificar) notificar(a.titulo, a.texto, forcar);
+}
 
 // ================================================================== dicas (tooltips "?")
-const dica = $("dica");
-let dicaAlvo = null;
+const D = { alvo: null };
 function mostrarDica(alvo) {
-  const texto = alvo.dataset.dica;
+  const texto = alvo.dataset.dica, dica = $("dica");
   if (!texto) return;
-  dicaAlvo = alvo;
-  dica.textContent = texto; dica.style.whiteSpace = "pre-line"; dica.hidden = false;
+  D.alvo = alvo;
+  dica.textContent = texto; dica.hidden = false;
   const r = alvo.getBoundingClientRect(), d = dica.getBoundingClientRect();
   let x = r.left + r.width / 2 - d.width / 2, y = r.bottom + 8;
   if (y + d.height > innerHeight - 8) y = r.top - d.height - 8;
   x = Math.max(8, Math.min(innerWidth - d.width - 8, x));
   dica.style.left = `${x}px`; dica.style.top = `${Math.max(8, y)}px`;
 }
-function esconderDica() { dica.hidden = true; dicaAlvo = null; }
-document.addEventListener("mouseover", (e) => { const a = e.target.closest("[data-dica]"); if (a && a !== dicaAlvo) mostrarDica(a); else if (!a && dicaAlvo) esconderDica(); });
-document.addEventListener("focusin", (e) => { const a = e.target.closest("[data-dica]"); if (a) mostrarDica(a); });
-document.addEventListener("focusout", esconderDica);
-document.addEventListener("click", (e) => {
-  const a = e.target.closest(".q[data-dica]");
-  if (a) { e.preventDefault(); e.stopPropagation(); dicaAlvo === a ? esconderDica() : mostrarDica(a); }
-  else if (dicaAlvo && !e.target.closest("[data-dica]")) esconderDica();
-}, true);
-addEventListener("scroll", esconderDica, { passive: true });
+function esconderDica() { $("dica").hidden = true; D.alvo = null; }
+function ligarDicas() {
+  document.addEventListener("mouseover", (e) => {
+    const a = e.target.closest("[data-dica]");
+    if (a && a !== D.alvo) mostrarDica(a); else if (!a && D.alvo) esconderDica();
+  });
+  document.addEventListener("focusin", (e) => { const a = e.target.closest("[data-dica]"); if (a) mostrarDica(a); });
+  document.addEventListener("focusout", esconderDica);
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest(".q[data-dica]");
+    if (a) { e.preventDefault(); e.stopPropagation(); if (D.alvo === a) esconderDica(); else mostrarDica(a); }
+    else if (D.alvo && !e.target.closest("[data-dica]")) esconderDica();
+  }, true);
+  addEventListener("scroll", esconderDica, { passive: true });
+}
 
 // ================================================================== faixa de probabilidade (IC + estimativa + break-even)
 const DOMINIO = [0.30, 0.80];
-const posicao = (v) => `${Math.max(0, Math.min(100, 100 * (v - DOMINIO[0]) / (DOMINIO[1] - DOMINIO[0])))}%`;
+const posicao = (v) => `${Math.max(0, Math.min(100, (100 * (v - DOMINIO[0])) / (DOMINIO[1] - DOMINIO[0])))}%`;
 function desenharFaixa(caixa, p, grande = false) {
   if (!caixa._partes) {
-    caixa.innerHTML = "";
+    caixa.replaceChildren();
     const partes = { trilho: el("i", "trilho"), ic: el("i", "ic-faixa"), be: el("i", "be"), ponto: el("i", "ponto-est") };
     caixa.append(partes.trilho, partes.ic, partes.be, partes.ponto);
     if (grande) for (const v of [0.4, 0.5, 0.6, 0.7]) { const t = el("span", "eixo", pct(v)); t.style.left = posicao(v); caixa.appendChild(t); }
@@ -183,12 +273,62 @@ function desenharFaixa(caixa, p, grande = false) {
   if (grande) be.dataset.rotulo = `mínimo p/ lucrar ${pct(p.be, 1)}`;
 }
 
-// ================================================================== veredito
-const ICONE_ESTADO = { ENTRAR: null, PREPARANDO: "i-ampulheta", AGUARDAR: "i-pausa", CONFLITO: "i-alerta",
-                       OBSERVACAO: "i-olho", INICIO: "i-play", CARREGANDO: "i-ampulheta" };
+// ================================================================== veredito (cartão grande + barra compacta)
+const ICONE_ESTADO = { PREPARANDO: "i-ampulheta", AGUARDAR: "i-pausa", CONFLITO: "i-alerta", OBSERVACAO: "i-olho",
+                       INICIO: "i-play", CARREGANDO: "i-ampulheta" };
 let assinaturaVeredito = "";
+function trocarIcone(caixa, icone) {
+  const use = caixa.querySelector("use");
+  if (use.getAttribute("href") !== "#" + icone) use.setAttribute("href", "#" + icone);
+}
+function pilulaDirecao(alvo, v, classeBase) {
+  const mostra = v.dir && ["ENTRAR", "PREPARANDO", "OBSERVACAO"].includes(v.estado);
+  alvo.hidden = !mostra;
+  if (!mostra) return;
+  alvo.className = `${classeBase} ${v.dir} ${v.estado === "ENTRAR" ? "" : "contorno"}`;
+  alvo.replaceChildren(svgUso(ICONE_DIR[v.dir], ""), document.createTextNode(ACAO[v.dir]));
+  alvo.setAttribute("aria-label", `${ACAO[v.dir]}, ${v.dir === "CALL" ? "alta" : "baixa"}`);
+}
+function mostrarFormacao(v) {
+  const p = v.progresso;
+  const mostrar = !!p && ["PREPARANDO", "AGUARDAR", "OBSERVACAO"].includes(v.estado);
+  $("vFormacao").hidden = !mostrar;
+  if (!mostrar) return;
+  setTxt($("vFormPct"), `${p.pct}%`);
+  let info = `${p.cumpridas} de ${p.total} condições` + (p.dir ? ` · ${ACAO[p.dir]} ${SETA[p.dir]}` : "");
+  if (p.cumpridas < p.total) info += p.distancia_atr !== null && p.distancia_atr !== undefined
+    ? ` · gatilho a ${num(p.distancia_atr, 2)} ATR` : " · gatilho fora de alcance nesta vela";
+  setTxt($("vFormInfo"), `${info} · aviso a partir de ${S.limite}%`);
+  const barraF = $("vFormBarra");
+  barraF.querySelector(".bf-preench").style.width = `${p.pct}%`;
+  const lim = barraF.querySelector(".bf-limite");
+  lim.style.left = `${S.limite}%`; lim.title = `aviso a partir de ${S.limite}%`;
+  barraF.setAttribute("aria-valuenow", String(p.pct));
+  const ul = $("vCondicoes"); ul.replaceChildren();
+  for (const c of p.condicoes || []) {
+    const li = el("li", c.ok ? "ok" : "", c.texto);
+    li.setAttribute("aria-label", `${c.ok ? "Cumprida" : "Ainda não"}: ${c.texto}`);
+    ul.appendChild(li);
+  }
+}
+function textoOutras() {
+  const alvo = S.veredito && S.veredito.estrategia;
+  const partes = [];
+  for (const s of Object.values(S.estados)) {
+    if (s.id === alvo || !s.dir || !S.ativas.has(s.id)) continue;
+    const e = porId(s.id);
+    if (s.estado === "SINAL") partes.push(`${e.nome}: sinal agora ${ACAO[s.dir]}`);
+    else if (s.estado === "PARCIAL" && s.cumpridas) partes.push(`${e.nome} ${s.cumpridas}/${s.total} ${ACAO[s.dir]}`);
+  }
+  return partes.length ? `Outras estratégias (sem aviso): ${partes.join(" · ")}` : "";
+}
+function atualizarOutras() {
+  const outras = textoOutras();
+  $("vOutras").hidden = !outras; setTxt($("vOutras"), outras);
+}
 function mostrarVeredito(v) {
-  const chave = JSON.stringify(v) + simboloAtual + tfAtual;
+  atualizarOutras();   // muda a cada segundo, mesmo com o veredito igual
+  const chave = JSON.stringify(v) + S.simbolo + S.tf + S.limite;
   if (chave === assinaturaVeredito) return;
   assinaturaVeredito = chave;
   const card = $("veredito");
@@ -198,20 +338,16 @@ function mostrarVeredito(v) {
   if (estadoAntes !== v.estado) {   // reinicia a animação de entrada do conteúdo
     const corpo = card.querySelector(".v-corpo"); corpo.style.animation = "none"; void corpo.offsetWidth; corpo.style.animation = "";
   }
-  setTxt($("vContexto"), simboloAtual ? `Agora · ${nomeAtivo(simboloAtual)} ${tfAtual}` : "Agora");
+  setTxt($("vContexto"), S.simbolo ? `Agora · ${nomeAtivo(S.simbolo)} ${S.tf}` : "Agora");
+  const lider = idLider(), chip = $("vLider");
+  chip.hidden = !lider;
+  if (lider) setTxt(chip, `Líder: ${porId(lider).nome}`);
   const fita = $("vFita"); fita.hidden = !v.rotulo; setTxt(fita, v.rotulo || "");
-  const icone = ICONE_ESTADO[v.estado] || ICONE_DIR[v.dir] || "i-pausa";
-  const use = $("vIcone").querySelector("use"); if (use.getAttribute("href") !== "#" + icone) use.setAttribute("href", "#" + icone);
+  trocarIcone($("vIcone"), ICONE_ESTADO[v.estado] || ICONE_DIR[v.dir] || "i-pausa");
   setTxt($("vTitulo"), v.titulo);
-  const dir = $("vDirecao");
-  const mostraDir = v.dir && ["ENTRAR", "PREPARANDO", "OBSERVACAO"].includes(v.estado);
-  dir.hidden = !mostraDir;
-  if (mostraDir) {
-    dir.className = `v-direcao ${v.dir} ${v.estado === "ENTRAR" ? "" : "contorno"}`;
-    dir.replaceChildren(svgUso(ICONE_DIR[v.dir], ""), document.createTextNode(ACAO[v.dir]));
-    dir.setAttribute("aria-label", `${ACAO[v.dir]}, ${v.dir === "CALL" ? "alta" : "baixa"}`);
-  }
+  pilulaDirecao($("vDirecao"), v, "v-direcao");
   $("vFrase").textContent = v.frase || "";
+  mostrarFormacao(v);
   const p = v.prob;
   $("vProb").hidden = !p;
   if (p) {
@@ -226,6 +362,17 @@ function mostrarVeredito(v) {
     const av = $("vAvisos"); av.replaceChildren();
     for (const a of p.avisos || []) { const c = el("span", "aviso-chip"); c.append(svgUso("i-alerta"), document.createTextNode(a.texto)); av.appendChild(c); }
   }
+  // barra compacta
+  const vb = $("vBarra");
+  vb.className = `v-barra ${v.estado} ${v.dir || ""}`;
+  trocarIcone($("vbIcone"), ICONE_ESTADO[v.estado] || ICONE_DIR[v.dir] || "i-pausa");
+  setTxt($("vbTitulo"), v.titulo);
+  pilulaDirecao($("vbDir"), v, "vb-dir");
+  const info = [];
+  if (v.progresso && ["PREPARANDO", "AGUARDAR", "OBSERVACAO"].includes(v.estado)) info.push(`formação ${v.progresso.pct}%`);
+  if (p && p.ok) info.push(`prob. estimada ${p.curto} (${p.faixa}, ${p.n} operações)`);
+  if (S.simbolo) info.unshift(`${nomeAtivo(S.simbolo)} ${S.tf}`);
+  setTxt($("vbInfo"), info.join(" · "));
   atualizarRelogio();
   desenharMarcadores();
 }
@@ -235,24 +382,14 @@ function vereditoLocal(estado) {
   return { estado: "CARREGANDO", titulo: "Analisando o histórico…",
     frase: "Carregando as velas e calculando todas as estratégias. Leva alguns segundos." };
 }
-function aplicarVeredito(v) {
-  if (!v) return;
-  VEREDITO = v;
-  mostrarVeredito(v);
-}
-// Avisos decididos no servidor (binarias/avisos.py): aqui só tocamos o som e mostramos o texto.
-const SONS = { formando: () => somPreparo(), entrada_call: () => somEntrada("CALL"), entrada_put: () => somEntrada("PUT"),
-               resultado: () => somPreparo(), observacao: () => somPreparo() };
-const ESTILO_AVISO = { formando: ["prep", "i-ampulheta"], entrada: [null, null], resultado: ["", "i-check"],
-                       conflito: ["conf", "i-alerta"], lider: ["", "i-sino"], observacao: ["prep", "i-olho"] };
-function mostrarAviso(a, forcar = false) {
-  const [tipo, icone] = ESTILO_AVISO[a.categoria] || ["", "i-sino"];
-  aviso(a.titulo, a.texto, tipo === null ? a.dir : tipo, icone || ICONE_DIR[a.dir] || "i-sino");
-  if (a.som && SONS[a.som] && (somLigado || forcar)) SONS[a.som]();
-  if (a.notificar) notificar(a.titulo, a.texto, forcar);
+function aplicarVeredito(v) { if (v) { S.veredito = v; mostrarVeredito(v); } }
+function alturaTopo() { return $("topo").offsetHeight; }
+function atualizarBarraCompacta() {
+  const r = $("veredito").getBoundingClientRect();
+  $("vBarra").hidden = r.bottom > alturaTopo() + 12;
 }
 
-// ================================================================== relógio (anel + linha no gráfico)
+// ================================================================== relógio (anel, barra compacta e linha no gráfico)
 const CIRC = 2 * Math.PI * 88;
 function fmtTempo(s) {
   s = Math.max(0, Math.ceil(s));
@@ -261,243 +398,309 @@ function fmtTempo(s) {
 }
 function atualizarRelogio() {
   const anel = $("anel"), prog = $("anelProgresso"), linha = $("linhaEntrada");
-  if (!conectado || !fechaEm) {
-    setTxt($("tempo"), "--:--"); setTxt($("tempoRotulo"), "vela fecha em");
+  if (!S.conectado || !S.fechaEm) {
+    setTxt($("tempo"), "--:--"); setTxt($("tempoRotulo"), "vela fecha em"); setTxt($("vbTempo"), "--:--");
     prog.style.strokeDashoffset = CIRC; linha.hidden = true; return;
   }
-  let resta = fechaEm - (Date.now() / 1000 + offsetRelogio);
-  while (resta < 0) resta += segVela;
-  const estado = VEREDITO ? VEREDITO.estado : "";
-  let tempo = resta, total = segVela, rotulo = "próxima vela em", chip = `próxima vela · ${fmtTempo(resta)}`;
+  let resta = S.fechaEm - (Date.now() / 1000 + S.offset);
+  while (resta < 0) resta += S.seg;
+  const estado = S.veredito ? S.veredito.estado : "";
+  let tempo = resta, total = S.seg, rotulo = "próxima vela em", chip = `fim da vela · ${fmtTempo(resta)}`;
   if (estado === "ENTRAR") {
-    const restaEntrada = janelaEntrada - (segVela - resta);
-    if (restaEntrada > 0) { tempo = restaEntrada; total = janelaEntrada; rotulo = "para entrar"; chip = `entrada aberta · ${fmtTempo(restaEntrada)}`; }
-    else { rotulo = "vela fecha em"; }
+    const restaEntrada = S.janelaEntrada - (S.seg - resta);
+    if (restaEntrada > 0) { tempo = restaEntrada; total = S.janelaEntrada; rotulo = "para entrar"; chip = `entrada aberta · ${fmtTempo(restaEntrada)}`; }
+    else rotulo = "vela fecha em";
   } else if (estado === "PREPARANDO") { rotulo = "confirmação em"; chip = `confirmação · ${fmtTempo(resta)}`; }
-  setTxt($("tempo"), fmtTempo(tempo));
-  setTxt($("tempoRotulo"), rotulo);
+  setTxt($("tempo"), fmtTempo(tempo)); setTxt($("tempoRotulo"), rotulo);
+  setTxt($("vbTempo"), fmtTempo(tempo)); setTxt($("vbTempoRotulo"), rotulo);
   prog.style.strokeDashoffset = String(CIRC * (1 - tempo / total));
   anel.classList.toggle("urgente", tempo <= Math.min(10, total * 0.25));
   anel.classList.toggle("pulso", estado === "ENTRAR");
-  linha.className = "linha-entrada " + (estado === "ENTRAR" ? VEREDITO.dir : estado === "PREPARANDO" ? "PREPARANDO" : "");
+  linha.className = "linha-entrada " + (estado === "ENTRAR" ? S.veredito.dir : estado === "PREPARANDO" ? "PREPARANDO" : "");
   setTxt($("linhaEntradaTxt"), chip);
   posicionarLinhaEntrada();
 }
-setInterval(atualizarRelogio, 250);
 
-// ================================================================== ranking visual
-const linhasRk = {};
-function porId(id) { return (CONFIG && CONFIG.estrategias.find((e) => e.id === id)) || { simples: "", descricao: "" }; }
+// ================================================================== ranking em grupos (ordem honesta vem do servidor)
+function statusLinha(l, r) {
+  const j = l.janela;
+  if (!j || !j.decididas) return 3;
+  if (j.vantagem) return 0;
+  return j.decididas >= (r.min_ops_amostra || 30) ? 1 : 2;
+}
 function textoAgora(s) {
   if (!s || !s.dir) return "";
-  if (s.estado === "SINAL") return ` · sinal agora: ${ACAO[s.dir]}`;
-  return ` · ${s.cumpridas} de ${s.total} condições (${ACAO[s.dir]})`;
+  if (s.estado === "SINAL") return `sinal agora: ${ACAO[s.dir]} ${SETA[s.dir]}`;
+  if (s.estado === "FORMANDO") return `se formando: ${ACAO[s.dir]} ${SETA[s.dir]} (${s.pct}%)`;
+  if (s.cumpridas) return `${s.cumpridas} de ${s.total} condições · ${ACAO[s.dir]}`;
+  return "";
+}
+function stats(rotulo, j, velas) {
+  if (!j || !j.decididas) return [rotulo, `nenhuma operação nas últimas ${velas} velas`];
+  return [rotulo, `${pct(j.acerto)} (entre ${pct(j.ic_inf)} e ${pct(j.ic_sup)}) · ${j.decididas} operações · últimas ${velas} velas`];
+}
+function linhaRanking(l, pos, r, lider) {
+  const j = l.janela, e = porId(l.id), st = statusLinha(l, r);
+  const li = el("li", "rk-item" + (l.id === lider ? " lider" : "") + (S.ativas.has(l.id) ? "" : " desligada") + (S.rkAbertos.has(l.id) ? " aberto" : ""));
+  const bt = el("button", "rk-linha"); bt.type = "button";
+  bt.setAttribute("aria-expanded", String(S.rkAbertos.has(l.id)));
+  const nome = el("span", "rk-nome"); nome.appendChild(el("span", "", l.nome));
+  if (l.id === lider) nome.appendChild(el("span", "badge-lider", "LÍDER"));
+  const faixa = el("span", "faixa-prob");
+  const pc = el("span", "rk-pct" + (st >= 2 ? " cinza" : ""));
+  const info = el("span", "rk-info");
+  const agora = el("span", "rk-agora");
+  if (l.erro || !j) {
+    pc.textContent = "—";
+    info.textContent = l.erro ? "erro ao calcular" : "sem dados";
+  } else {
+    desenharFaixa(faixa, { acerto: j.acerto, inf: j.ic_inf, sup: j.ic_sup, be: r.break_even });
+    faixa.style.setProperty("--cor-faixa", j.vantagem ? css("--marca") : css("--texto-3"));
+    pc.append(document.createTextNode(j.decididas ? pct(j.acerto) : "—"), el("small", "", st === 2 ? "(amostra pequena)" : `${j.decididas} op.`));
+    info.append(`${j.decididas} operações`);
+    if (!S.ativas.has(l.id)) info.append(" · desmarcada");
+  }
+  info.append(agora);
+  S.rkAgora[l.id] = agora;
+  const s = l.selo || { codigo: "poucos", texto: "Poucos dados" };
+  const selo = el("span", `selo ${s.codigo}`, s.texto + (s.codigo === "comprovada" && s.perdendo_forca ? " · perdendo força" : ""));
+  bt.append(el("span", "rk-pos", String(pos)), nome, faixa, pc, info, selo);
+  const mais = el("div", "rk-mais");
+  mais.appendChild(el("p", "", e.simples || e.descricao));
+  const dl = el("dl");
+  const linhas = [stats("Recente", j, r.janela), stats("Histórico", l.historico, r.velas)];
+  if (l.forca && l.forca.estado) linhas.push(["Força", l.forca.estado]);
+  for (const [dt, dd] of linhas) dl.append(el("dt", "", dt), el("dd", "", dd));
+  mais.appendChild(dl);
+  bt.addEventListener("click", () => {
+    const aberto = li.classList.toggle("aberto");
+    bt.setAttribute("aria-expanded", String(aberto));
+    if (aberto) S.rkAbertos.add(l.id); else S.rkAbertos.delete(l.id);
+  });
+  li.append(bt, mais);
+  return li;
 }
 function aplicarRanking(r) {
-  RANKING = r;
-  setTxt($("rkSub"), `Acerto estimado nas últimas ${r.janela} velas. A faixa é a margem de erro; a linha é o mínimo para lucrar (${pct(r.break_even, 1)}).`);
+  S.ranking = r;
+  S.lider = r.lider !== undefined ? r.lider : r.melhor;
+  setTxt($("rkSub"), `${r.ordem || ""} Recente = últimas ${r.janela} velas; histórico = ${r.velas} velas. Mínimo para lucrar: ${pct(r.break_even, 1)}.`);
   setTxt($("rkCriterio"), r.criterio);
-  const lista = $("rkLista");
-  if (lista.querySelector(".vazio-txt")) lista.replaceChildren();
-  r.linhas.forEach((l, i) => {
-    let item = linhasRk[l.id];
-    if (!item) {
-      item = { li: el("li", "rk-item") };
-      const bt = el("button", "rk-linha"); bt.type = "button";
-      item.pos = el("span", "rk-pos");
-      const nome = el("span", "rk-nome"); item.nome = el("b"); item.info = el("small"); nome.append(item.nome, item.info);
-      item.faixa = el("span", "faixa-prob"); item.pct = el("span", "rk-pct"); item.selo = el("span", "selo");
-      bt.append(item.pos, nome, item.faixa, item.pct, item.selo);
-      item.mais = el("div", "rk-mais"); item.maisTxt = el("p"); item.maisNum = el("p"); item.mais.append(item.maisTxt, item.maisNum);
-      bt.addEventListener("click", () => { item.li.classList.toggle("aberto"); bt.setAttribute("aria-expanded", item.li.classList.contains("aberto")); });
-      item.bt = bt;
-      item.li.append(bt, item.mais);
-      linhasRk[l.id] = item;
-    }
-    item.l = l;
-    setTxt(item.pos, String(i + 1));
-    setTxt(item.nome, l.nome);
-    const j = l.janela, e = porId(l.id);
-    item.li.classList.toggle("lider", i === 0 && !!j && j.vantagem);
-    item.li.classList.toggle("desligada", !ativas.has(l.id));
-    if (l.erro || !j) {
-      setTxt(item.pct, "—"); setTxt(item.maisNum, "Erro ao calcular: " + (l.erro || "sem dados"));
-    } else {
-      desenharFaixa(item.faixa, { acerto: j.acerto, inf: j.ic_inf, sup: j.ic_sup, be: r.break_even });
-      item.faixa.style.setProperty("--cor-faixa", j.vantagem ? css("--marca") : css("--texto-3"));
-      setTxt(item.pct, pct(j.acerto));
-      setTxt(item.maisNum, j.decididas
-        ? `Deu ${j.operacoes} sinais nas últimas ${r.janela} velas. Acerto estimado ${pct(j.acerto)} (entre ${pct(j.ic_inf)} e ${pct(j.ic_sup)}), contra ${pct(r.break_even, 1)} necessários para lucrar.`
-        : `Não deu nenhum sinal nas últimas ${r.janela} velas.`);
-    }
-    setTxt(item.maisTxt, e.simples || e.descricao);
-    item.bt.dataset.dica = `${e.simples || e.descricao}\n${j ? `${j.operacoes} sinais nas últimas ${r.janela} velas.` : ""}`;
-    const s = l.selo || { codigo: "poucos", texto: "Poucos dados" };
-    item.selo.className = `selo ${s.codigo}`;
-    setTxt(item.selo, s.texto + (s.codigo === "comprovada" && s.perdendo_forca ? " · perdendo força" : ""));
-    atualizarInfoRk(item);
-  });
-  // reordena sem recriar (só se a ordem mudou)
-  const ordem = r.linhas.map((l) => linhasRk[l.id].li);
-  if (ordem.some((li, i) => lista.children[i] !== li)) ordem.forEach((li) => lista.appendChild(li));
+  const caixa = $("rkGrupos"); caixa.replaceChildren();
+  S.rkAgora = {};
+  const info = r.lider_info || {};
+  if (info.desafiante) {
+    const faltam = info.confirmacao - info.contagem;
+    caixa.appendChild(el("p", "rk-candidata", `Candidata a líder: ${porId(info.desafiante).nome}. Assume se continuar no topo por mais ${faltam} vela${faltam === 1 ? "" : "s"} fechada${faltam === 1 ? "" : "s"} (evita trocar a cada vela).`));
+  }
+  const grupos = [
+    { titulo: "Com vantagem comprovada", st: [0] },
+    { titulo: "Sem vantagem comprovada", st: [1] },
+    { titulo: `Poucos dados (menos de ${r.min_ops_amostra || 30} operações)`, st: [2, 3], recolhido: true },
+  ];
+  r.linhas.forEach((l, i) => { l._pos = i + 1; });
+  for (const g of grupos) {
+    const linhas = r.linhas.filter((l) => g.st.includes(statusLinha(l, r)));
+    if (!linhas.length) continue;
+    const box = g.recolhido ? el("details", "rk-grupo") : el("section", "rk-grupo");
+    const cab = g.recolhido ? el("summary", "", `${g.titulo} · ${linhas.length}`) : el("h3", "", `${g.titulo} · ${linhas.length}`);
+    const ol = el("ol", "rk-lista");
+    for (const l of linhas) ol.appendChild(linhaRanking(l, l._pos, r, S.lider));
+    box.append(cab, ol);
+    caixa.appendChild(box);
+  }
+  atualizarAgoraRanking();
   desenharTabelaRk(r);
   desenharMarcadores();
 }
-function atualizarInfoRk(item) {
-  const j = item.l.janela, s = estadosEst[item.l.id];
-  const base = j ? `${j.decididas} operações` : "sem dados";
-  const txt = base + textoAgora(s) + (ativas.has(item.l.id) ? "" : " · desmarcada");
-  if (item.info.textContent !== txt) {
-    item.info.textContent = base;
-    if (s && s.dir) { const a = el("span", `rk-agora ${s.estado === "SINAL" ? s.dir : ""}`, textoAgora(s)); item.info.appendChild(a); }
-    if (!ativas.has(item.l.id)) item.info.append(" · desmarcada");
+function atualizarAgoraRanking() {
+  for (const [id, alvo] of Object.entries(S.rkAgora)) {
+    const s = S.estados[id], txt = textoAgora(s);
+    alvo.className = `rk-agora ${s ? s.estado : ""} ${s && s.dir ? s.dir : ""}`;
+    setTxt(alvo, txt ? ` · ${txt}` : "");
   }
 }
 function desenharTabelaRk(r) {
   const t = $("rkTabela"); t.replaceChildren();
   const cab = el("tr");
-  ["Usar", "Estratégia", "Ops (janela)", "Acerto", "Margem de erro", "Lucro*", "Ops (histórico)", "Acerto hist.", "Força", "Selo"].forEach((h) => cab.appendChild(el("th", "", h)));
+  ["Usar", "Estratégia", "Ops (recente)", "Acerto", "Margem de erro", "Lucro*", "Ops (histórico)", "Acerto hist.", "Força", "Selo"]
+    .forEach((h) => cab.appendChild(el("th", "", h)));
   t.appendChild(cab);
   for (const l of r.linhas) {
     const tr = el("tr"), j = l.janela || {}, h = l.historico || {};
-    const cb = el("input"); cb.type = "checkbox"; cb.checked = ativas.has(l.id); cb.setAttribute("aria-label", `Usar ${l.nome}`);
-    cb.addEventListener("change", () => alternar(l.id, cb.checked));
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = S.ativas.has(l.id); cb.setAttribute("aria-label", `Usar ${l.nome}`);
+    cb.addEventListener("change", () => alternarEstrategia(l.id, cb.checked));
     const td0 = el("td"); td0.appendChild(cb); tr.appendChild(td0);
     [l.nome, j.operacoes ?? "—", pct(j.acerto, 1), j.ic_inf == null ? "—" : `${pct(j.ic_inf, 1)} a ${pct(j.ic_sup, 1)}`, num(j.lucro, 1),
-     h.operacoes ?? "—", pct(h.acerto, 1), (l.forca || {}).estado || "—", (l.selo || {}).texto || "—"].forEach((v) => tr.appendChild(el("td", "", String(v))));
+     h.operacoes ?? "—", pct(h.acerto, 1), (l.forca || {}).estado || "—", (l.selo || {}).texto || "—"]
+      .forEach((v) => tr.appendChild(el("td", "", String(v))));
     t.appendChild(tr);
   }
 }
-function alternar(id, ligado) {
-  ligado ? ativas.add(id) : ativas.delete(id);
-  store.set("ativas", [...ativas]);
-  enviar({ acao: "ativas", ativas: [...ativas] });
-  if (RANKING) aplicarRanking(RANKING);
+function alternarEstrategia(id, ligado) {
+  if (ligado) S.ativas.add(id); else S.ativas.delete(id);
+  store.set("ativas", [...S.ativas]);
+  enviar({ acao: "ativas", ativas: [...S.ativas] });
+  if (S.ranking) aplicarRanking(S.ranking);
 }
 
-// ================================================================== estados por estratégia (a cada segundo)
+// ================================================================== estado de cada estratégia (a cada segundo)
 function aplicarEstado(msg) {
-  fechaEm = msg.fecha_em;
-  offsetRelogio = msg.agora - Date.now() / 1000;
-  estadosEst = Object.fromEntries(msg.estrategias.map((s) => [s.id, s]));
-  for (const item of Object.values(linhasRk)) if (item.l) atualizarInfoRk(item);
+  S.fechaEm = msg.fecha_em;
+  S.offset = msg.agora - Date.now() / 1000;
+  if (typeof msg.limite === "number") S.limite = msg.limite;
+  if (msg.lider !== undefined) S.lider = msg.lider;
+  S.estados = Object.fromEntries(msg.estrategias.map((s) => [s.id, s]));
+  atualizarAgoraRanking();
   aplicarVeredito(msg.veredito);
 }
 
-// ================================================================== mercado
+// ================================================================== mercado em palavras simples + resumo técnico
 const NIVEL = { Fraca: 1, "Média": 2, Forte: 3, Calmo: 1, Normal: 2, Agitado: 3 };
 function cartaoMercado(id, { classe = "", icone, valor, nivel, extra }) {
   const c = $(id);
   c.className = "m-cartao " + classe;
-  const use = c.querySelector("use"); if (icone && use.getAttribute("href") !== "#" + icone) use.setAttribute("href", "#" + icone);
+  if (icone) trocarIcone(c, icone);
   setTxt(c.querySelector("b"), valor);
   const m = c.querySelector(".medidor"); if (m && nivel !== undefined) m.dataset.n = String(nivel);
   if (extra !== undefined) setTxt(c.querySelector(".m-extra"), extra);
 }
+function secaoTecnica(titulo, valor, texto, explica) {
+  const s = el("section"), h = el("h4", "", titulo);
+  const q = el("button", "q", "?"); q.type = "button"; q.dataset.dica = explica; q.setAttribute("aria-label", `Explicar ${titulo}`);
+  h.appendChild(q);
+  s.append(h, el("p", "valor", valor), el("p", "", texto));
+  return s;
+}
 function aplicarAnalise(a) {
-  ultimaAnalise = a;
+  S.analise = a;
   setTxt($("mCriterio"), a.criterio || "");
   const h = a.humano || { ok: false, frase: `Análise indisponível: ${a.motivo || "sem dados"}.` };
   setTxt($("mFrase"), h.frase); setTxt($("resumoTexto"), h.frase);
   if (!h.ok) return;
-  const classe = { SUBINDO: "ALTA", DESCENDO: "BAIXA", LATERAL: "" }[h.tendencia];
-  cartaoMercado("mTend", { classe, icone: { SUBINDO: "i-cima", DESCENDO: "i-baixo", LATERAL: "i-lado" }[h.tendencia],
+  cartaoMercado("mTend", { classe: { SUBINDO: "ALTA", DESCENDO: "BAIXA", LATERAL: "" }[h.tendencia],
+                           icone: { SUBINDO: "i-cima", DESCENDO: "i-baixo", LATERAL: "i-lado" }[h.tendencia],
                            valor: h.tendencia, nivel: NIVEL[h.forca], extra: `força ${h.forca}` });
   cartaoMercado("mMov", { icone: "i-onda", valor: h.movimento, nivel: NIVEL[h.movimento],
                           extra: { Calmo: "pouca oscilação", Normal: "oscilação comum", Agitado: "oscilações grandes" }[h.movimento] });
   velaAtual(null);
-  const dl = $("mTecnico"); dl.replaceChildren();
-  const linha = (rotulo, valor, explica) => {
-    const dt = el("dt", "", rotulo); const q = el("button", "q", "?"); q.type = "button"; q.dataset.dica = explica; dt.appendChild(q);
-    dl.append(dt, el("dd", "", valor));
-  };
-  linha("Força (ADX 14)", `${num(a.adx, 1)} · ${a.forca}`, "O ADX mede a força do movimento, não a direção. Abaixo de 20 = fraca; de 20 a 25 = média; acima de 25 = forte.");
-  linha("Preço × média de 50", `${comSinal(a.distancia_ma_atr)} ATR`, "Quanto o preço está acima (+) ou abaixo (−) da média das últimas 50 velas, medido em ATRs (o tamanho típico de uma vela).");
-  linha("Inclinação da média", `${comSinal(a.inclinacao_atr)} ATR em 10 velas`, "Quanto a média de 50 velas subiu ou caiu nas últimas 10 velas. Acima de +0,5 ou abaixo de −0,5 indica tendência.");
-  linha("Volatilidade (ATR 14)", `${num(a.atr, casas)} · percentil ${num(a.atr_percentil, 0)}`, "O ATR é o tamanho médio das velas. O percentil compara com as últimas 500 velas: perto de 50 é normal; acima de 90, muito agitado; abaixo de 10, muito parado.");
-  linha("Resumo técnico", a.resumo || "—", "O mesmo resumo, com os números técnicos.");
+  const dist = a.distancia_ma_atr, incl = a.inclinacao_atr;
+  const tendTxt = `O preço está ${num(Math.abs(dist))} ATR ${dist >= 0 ? "acima" : "abaixo"} da média das últimas 50 velas. `
+    + `A média ${incl >= 0 ? "subiu" : "caiu"} ${num(Math.abs(incl))} ATR nas últimas 10 velas.`;
+  const vela = a.vela_atual || {};
+  $("mTecnico").replaceChildren(
+    secaoTecnica("Tendência", { ALTA: "Alta", BAIXA: "Baixa", LATERAL: "Lateral" }[a.tendencia], tendTxt,
+      "Alta: preço acima da média de 50 velas e a média subindo mais de 0,5 ATR em 10 velas. Baixa: o inverso. Senão, lateral."),
+    secaoTecnica("Força do movimento", `ADX ${num(a.adx, 0)} · ${a.forca}`, "Mede a força, não a direção. Abaixo de 20 é fraca; de 20 a 25, média; acima de 25, forte.",
+      "ADX (14 velas): índice de força da tendência, de 0 a 100."),
+    secaoTecnica("Tamanho das velas", `Percentil ${num(a.atr_percentil, 0)} · ${a.volatilidade}`,
+      `Tamanho médio (ATR): ${num(a.atr, S.casas)}. Perto do percentil 50 é normal; acima de 90, muito agitado; abaixo de 10, muito parado.`,
+      "ATR (14 velas): tamanho médio das velas. O percentil compara com as últimas 500 velas."),
+    secaoTecnica("Vela atual", { ALTA: "Verde (subindo)", BAIXA: "Vermelha (caindo)", DOJI: "Sem corpo (indecisão)" }[vela.direcao] || "—",
+      `Corpo de ${num(vela.corpo_atr)} ATR (${vela.fonte || "—"}).`, "Tamanho do corpo da vela comparado ao tamanho médio (ATR)."),
+  );
 }
 function velaAtual(v) {
-  if (!ultimaAnalise || !ultimaAnalise.ok) return;
+  if (!S.analise || !S.analise.ok) return;
   let dir;
   if (v) { const c = v[4] - v[1]; dir = c > 0 ? "ALTA" : c < 0 ? "BAIXA" : "DOJI"; }
-  else dir = ultimaAnalise.vela_atual.direcao;
+  else dir = S.analise.vela_atual.direcao;
   cartaoMercado("mVela", { classe: dir === "DOJI" ? "" : dir, icone: dir === "ALTA" ? "i-cima" : dir === "BAIXA" ? "i-baixo" : "i-lado",
                            valor: { ALTA: "Subindo", BAIXA: "Descendo", DOJI: "Parada" }[dir], extra: v ? "em formação" : "" });
 }
 
 // ================================================================== top 3
 let assinaturaTop = "";
-function sparkline(valores) {
-  const ns = "http://www.w3.org/2000/svg";
-  const s = document.createElementNS(ns, "svg");
+function sparkline(valores, variacao) {
+  const s = document.createElementNS(NS, "svg");
   s.setAttribute("class", "spark"); s.setAttribute("viewBox", "0 0 100 30"); s.setAttribute("preserveAspectRatio", "none"); s.setAttribute("aria-hidden", "true");
   if (!valores || valores.length < 2) return s;
   const min = Math.min(...valores), max = Math.max(...valores), amp = max - min || 1;
   const pts = valores.map((v, i) => [(100 * i) / (valores.length - 1), 27 - (24 * (v - min)) / amp]);
   const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join("");
+  const cor = variacao > 0.0001 ? css("--alta") : variacao < -0.0001 ? css("--baixa") : css("--marca");
   const id = "g" + Math.random().toString(36).slice(2, 8);
-  const defs = document.createElementNS(ns, "defs");
-  defs.innerHTML = `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${css("--marca")}" stop-opacity=".35"/><stop offset="1" stop-color="${css("--marca")}" stop-opacity="0"/></linearGradient>`;
-  const area = document.createElementNS(ns, "path"); area.setAttribute("d", `${d}L100,30L0,30Z`); area.setAttribute("fill", `url(#${id})`);
-  const linha = document.createElementNS(ns, "path"); linha.setAttribute("d", d); linha.setAttribute("fill", "none");
-  linha.setAttribute("stroke", css("--marca")); linha.setAttribute("stroke-width", "1.6"); linha.setAttribute("vector-effect", "non-scaling-stroke"); linha.setAttribute("stroke-linejoin", "round");
+  const defs = document.createElementNS(NS, "defs"), grad = document.createElementNS(NS, "linearGradient");
+  grad.setAttribute("id", id); grad.setAttribute("x1", "0"); grad.setAttribute("y1", "0"); grad.setAttribute("x2", "0"); grad.setAttribute("y2", "1");
+  for (const [off, op] of [["0", ".32"], ["1", "0"]]) {
+    const st = document.createElementNS(NS, "stop"); st.setAttribute("offset", off); st.setAttribute("stop-color", cor); st.setAttribute("stop-opacity", op); grad.appendChild(st);
+  }
+  defs.appendChild(grad);
+  const area = document.createElementNS(NS, "path"); area.setAttribute("d", `${d}L100,30L0,30Z`); area.setAttribute("fill", `url(#${id})`);
+  const linha = document.createElementNS(NS, "path"); linha.setAttribute("d", d); linha.setAttribute("fill", "none");
+  linha.setAttribute("stroke", cor); linha.setAttribute("stroke-width", "1.6"); linha.setAttribute("vector-effect", "non-scaling-stroke"); linha.setAttribute("stroke-linejoin", "round");
   s.append(defs, area, linha);
   return s;
 }
 function anelPontos(p) {
-  const ns = "http://www.w3.org/2000/svg", c = 2 * Math.PI * 22;
-  const caixa = el("div", "anel-pts");
-  caixa.innerHTML = `<svg viewBox="0 0 52 52" aria-hidden="true"><circle class="t" cx="26" cy="26" r="22"/><circle class="p" cx="26" cy="26" r="22" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p / 100)}"/></svg>`;
-  caixa.appendChild(el("b", "", String(p)));
-  caixa.setAttribute("role", "img"); caixa.setAttribute("aria-label", `Pontuação ${p} de 100`);
-  void ns;
+  const c = 2 * Math.PI * 22, caixa = el("div", "anel-pts");
+  const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 52 52"); s.setAttribute("aria-hidden", "true");
+  for (const [cls, extra] of [["t", {}], ["p", { "stroke-dasharray": c, "stroke-dashoffset": c * (1 - p / 100) }]]) {
+    const ci = document.createElementNS(NS, "circle");
+    ci.setAttribute("class", cls); ci.setAttribute("cx", "26"); ci.setAttribute("cy", "26"); ci.setAttribute("r", "22");
+    for (const [k, v] of Object.entries(extra)) ci.setAttribute(k, String(v));
+    s.appendChild(ci);
+  }
+  caixa.append(s, el("b", "", String(Math.round(p))));
   return caixa;
 }
+function itemTop(r, i) {
+  const li = el("li", "top-item"); li.dataset.simbolo = r.simbolo; li.tabIndex = 0; li.setAttribute("role", "button");
+  li.setAttribute("aria-label", `${i + 1}º ${nomeAtivo(r.simbolo)}, nota ${Math.round(r.pontos)} de 100. ${r.porque || ""}. Abrir no gráfico.`);
+  const nome = el("div", "top-nome"); nome.appendChild(el("b", "", nomeAtivo(r.simbolo)));
+  const tag = el("span", "tag", "No gráfico"); tag.hidden = true; nome.appendChild(tag);
+  const t = r.tendencia || "LATERAL";
+  const tend = el("span", `tend ${t}`);
+  tend.append(svgUso(t === "ALTA" ? "i-cima" : t === "BAIXA" ? "i-baixo" : "i-lado"), document.createTextNode({ ALTA: "Subindo", BAIXA: "Descendo", LATERAL: "Lateral" }[t]));
+  const spark = el("span", "spark-caixa");
+  const vv = r.variacao;
+  spark.append(sparkline(r.spark, vv || 0));
+  if (vv !== null && vv !== undefined) spark.appendChild(el("span", `spark-var ${vv > 0.0001 ? "ALTA" : vv < -0.0001 ? "BAIXA" : "LATERAL"}`, `${comSinal(100 * vv, 2)}%`));
+  const linha2 = el("div", "top-linha2"); linha2.append(tend, spark);
+  const nota = el("ul", "top-nota");
+  nota.setAttribute("aria-label", "Por que essa nota");
+  for (const c of r.explicacao || []) {
+    const item = el("li"); const br = el("span", "br"); const fill = el("i"); fill.style.width = `${(100 * c.pontos) / c.max}%`; br.appendChild(fill);
+    item.append(el("span", "nm", c.nome), br, el("span", "pt", `${num(c.pontos, 0)}/${c.max}`), el("span", "tx", c.texto));
+    item.title = `${c.nome}: ${c.texto}`;
+    nota.appendChild(item);
+  }
+  li.append(el("span", "top-pos", String(i + 1)), nome, anelPontos(r.pontos), linha2, el("div", "top-porque", r.porque || r.resumo || ""), nota);
+  const abrir = () => abrirAtivo(r.simbolo);
+  li.addEventListener("click", abrir);
+  li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); abrir(); } });
+  return li;
+}
 function aplicarTop(msg) {
-  setTxt($("topInfo"), `${msg.timeframe} · ${new Date(msg.atualizado * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}${msg.carregando ? ` · carregando ${msg.carregando}` : ""}`);
-  $("qTop").dataset.dica = "Pontuação de 0 a 100:\n• " + msg.regra.join("\n• ");
-  const chave = JSON.stringify(msg.itens.map((r) => [r.simbolo, r.pontos, r.porque, r.tendencia, (r.spark || []).slice(-1)[0]])) + msg.carregando;
+  setTxt($("topInfo"), `${msg.timeframe} · ${fmtHora(msg.atualizado)}${msg.carregando ? ` · carregando ${msg.carregando}` : ""}`);
+  $("qTop").dataset.dica = "Nota de 0 a 100:\n• " + msg.regra.join("\n• ");
+  const chave = JSON.stringify(msg.itens.map((r) => [r.simbolo, r.pontos, r.porque, r.tendencia, r.spark && r.spark.slice(-1)[0], r.variacao])) + msg.carregando;
   if (chave !== assinaturaTop) {
     assinaturaTop = chave;
     const lista = $("topLista"); lista.replaceChildren();
     if (!msg.itens.length) lista.appendChild(el("li", "vazio-txt", msg.carregando ? "Carregando históricos dos ativos…" : "Nenhum ativo aberto e com dados no momento."));
-    msg.itens.forEach((r, i) => {
-      const li = el("li", "top-item"); li.dataset.simbolo = r.simbolo; li.tabIndex = 0; li.setAttribute("role", "button");
-      li.setAttribute("aria-label", `${i + 1}º ${nomeAtivo(r.simbolo)}, ${r.pontos} pontos. Abrir no gráfico.`);
-      const nome = el("div", "top-nome"); nome.appendChild(el("b", "", nomeAtivo(r.simbolo)));
-      const tag = el("span", "tag", "No gráfico"); tag.hidden = true; nome.appendChild(tag);
-      const t = r.tendencia || "LATERAL";
-      const tend = el("span", `tend ${t}`);
-      tend.append(svgUso(t === "ALTA" ? "i-cima" : t === "BAIXA" ? "i-baixo" : "i-lado"), document.createTextNode({ ALTA: "Subindo", BAIXA: "Descendo", LATERAL: "Lateral" }[t]));
-      const linha2 = el("div", "top-linha2"); linha2.append(tend, sparkline(r.spark));
-      li.append(el("span", "top-pos", String(i + 1)), nome, anelPontos(r.pontos), linha2, el("div", "top-porque", r.porque || r.resumo || ""));
-      const abrir = () => abrirAtivo(r.simbolo);
-      li.addEventListener("click", abrir);
-      li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); abrir(); } });
-      lista.appendChild(li);
-    });
+    msg.itens.forEach((r, i) => lista.appendChild(itemTop(r, i)));
   }
   marcarTopAtual();
   const tab = $("topTodos"); tab.replaceChildren();
-  const cab = el("tr"); ["Ativo", "Pontos", "Movimento", "Tendência", "Estratégia", "Situação"].forEach((h) => cab.appendChild(el("th", "", h))); tab.appendChild(cab);
+  const cab = el("tr"); ["Ativo", "Nota", "Movimento", "Tendência", "Estratégia", "Situação"].forEach((h) => cab.appendChild(el("th", "", h))); tab.appendChild(cab);
   for (const r of msg.todos) {
     const tr = el("tr"), c = r.componentes || {};
-    [nomeAtivo(r.simbolo), r.pontos, c.volatilidade ?? "—", c.tendencia ?? "—", c.estrategia ?? "—",
-     r.elegivel ? `${r.tendencia} · ADX ${num(r.adx, 0)}` : (r.motivo || "—")].forEach((v) => tr.appendChild(el("td", "", String(v))));
+    [nomeAtivo(r.simbolo), num(r.pontos, 1), c.volatilidade !== undefined ? num(c.volatilidade, 1) : "—", c.tendencia !== undefined ? num(c.tendencia, 1) : "—",
+     c.estrategia !== undefined ? num(c.estrategia, 0) : "—", r.elegivel ? r.porque : (r.motivo || "—")]
+      .forEach((v) => tr.appendChild(el("td", "", String(v))));
     tab.appendChild(tr);
   }
 }
 function marcarTopAtual() {
   for (const li of $("topLista").querySelectorAll(".top-item")) {
-    const atual = li.dataset.simbolo === simboloAtual;
+    const atual = li.dataset.simbolo === S.simbolo;
     li.classList.toggle("atual", atual);
     li.querySelector(".tag").hidden = !atual;
   }
 }
 function abrirAtivo(simbolo) {
-  if (DEMO) { aviso("Demonstração", "Na demonstração o gráfico não troca de ativo. Ao vivo, isto abre o ativo sem recarregar a página.", "", "i-olho"); return; }
-  const a = ATIVOS.find((x) => x.symbol === simbolo);
+  if (DEMO) { toast("Demonstração", "Na demonstração o gráfico não troca de ativo. Ao vivo, isto abre o ativo sem recarregar a página.", "", "i-olho"); return; }
+  const a = S.ativos.find((x) => x.symbol === simbolo);
   if (a) { $("selMercado").value = a.market_display_name; preencherAtivos(); }
   else if (![...$("selAtivo").options].some((o) => o.value === simbolo)) $("selAtivo").add(new Option(simbolo, simbolo));
   $("selAtivo").value = simbolo;
@@ -505,33 +708,33 @@ function abrirAtivo(simbolo) {
 }
 
 // ================================================================== operações da sessão (bolinhas)
-const bolinhas = {}, placar = { w: 0, l: 0 };
 function adicionarSinal(msg) {
   const lista = $("bolinhas");
   if (lista.querySelector(".vazio-txt")) lista.replaceChildren();
   const b = el("li", "bolinha pend" + (msg.principal ? " principal" : ""));
-  b.dataset.dica = `${fmtHora(msg.t + segVela)} · ${msg.nome}\n${ACAO[msg.dir]} ${msg.dir === "CALL" ? "▲" : "▼"} · ${nomeAtivo(msg.ativo)}\naguardando resultado`;
+  b.dataset.dica = `${fmtHora(msg.t + S.seg)} · ${msg.nome}\n${ACAO[msg.dir]} ${SETA[msg.dir]} · ${nomeAtivo(msg.ativo)}\naguardando resultado`;
   b.setAttribute("aria-label", `${msg.nome}, ${ACAO[msg.dir]}, aguardando`);
   b.tabIndex = 0;
   lista.appendChild(b);
-  bolinhas[msg.op] = { li: b, msg };
+  S.bolinhas[msg.op] = { li: b, msg };
   while (lista.children.length > 40) lista.firstChild.remove();
 }
 function aplicarResultado(msg) {
-  const x = bolinhas[msg.op];
+  const x = S.bolinhas[msg.op], r = msg.resultado;
   if (x) {
-    const r = msg.resultado;
     x.li.className = `bolinha ${r}` + (x.msg.principal ? " principal" : "");
     x.li.replaceChildren(r === "WIN" ? svgUso("i-check") : r === "LOSS" ? svgUso("i-x") : document.createTextNode("="));
     const rotulo = { WIN: "acerto (WIN)", LOSS: "erro (LOSS)", EMPATE: "empate", CANCELADO: "cancelada" }[r] || r;
     x.li.dataset.dica = x.li.dataset.dica.replace("aguardando resultado", rotulo);
     x.li.setAttribute("aria-label", `${x.msg.nome}: ${rotulo}`);
   }
-  if (msg.resultado === "WIN") placar.w++; else if (msg.resultado === "LOSS") placar.l++;
-  setTxt($("placar"), `${placar.w} acerto${placar.w === 1 ? "" : "s"} · ${placar.l} erro${placar.l === 1 ? "" : "s"}`);
+  const principal = msg.principal !== undefined ? msg.principal : !!(x && x.msg.principal);
+  if (r in S.placar) { S.placar[r]++; if (principal) S.placarFarol[r]++; }
+  const f = S.placarFarol, t = S.placar;
+  setTxt($("placar"), `Avisadas: ${f.WIN} WIN · ${f.LOSS} LOSS · ${f.EMPATE} EMPATE  |  Todas: ${t.WIN} WIN · ${t.LOSS} LOSS`);
 }
 
-// ================================================================== conexão
+// ================================================================== conexão com o servidor local
 const TEXTO_CONEXAO = { conectado: "Deriv conectada", conectando: "Conectando…", reconectando: "Reconectando…", desconectado: "Sem conexão" };
 function setConexao(msg) {
   $("pontoDeriv").className = "ponto " + msg.estado;
@@ -540,23 +743,29 @@ function setConexao(msg) {
 }
 function setStatus(texto, nivel = "info") {
   $("conexao").dataset.status = texto;
-  if (nivel === "erro") aviso("Atenção", texto, "erro", "i-alerta", 12000);
-  else if (nivel === "aviso") aviso("Aviso", texto, "prep", "i-alerta", 10000);
+  if (nivel === "erro") toast("Atenção", texto, "erro", "i-alerta", 12000);
+  else if (nivel === "aviso") toast("Aviso", texto, "prep", "i-alerta", 10000);
 }
-function enviar(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function enviar(obj) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj)); }
+function enviarPreferencias() { enviar({ observacao: P.obs, avisar_obs: P.avisarObs, limite_formacao: S.limite }); }
 function abrirWs() {
   return new Promise((ok, falha) => {
-    if (ws && ws.readyState === 1) return ok();
+    if (S.ws && S.ws.readyState === 1) { ok(); return; }
     const sock = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-    ws = sock;
+    S.ws = sock;
     sock.onopen = () => ok();
-    sock.onmessage = (ev) => { try { tratar(JSON.parse(ev.data)); } catch (e) { console.error("mensagem inválida", e); } };
+    sock.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); }
+      catch { setStatus("Mensagem inválida do servidor (ignorada).", "erro"); return; }
+      tratar(msg);
+    };
     sock.onclose = () => {
-      if (ws === sock) ws = null;
-      falha(new Error("fechado"));
-      if (conectado) {
+      if (S.ws === sock) S.ws = null;
+      falha(new Error("conexão fechada"));
+      if (S.conectado) {
         $("pontoDeriv").className = "ponto erro"; setTxt($("txtDeriv"), "Servidor local fora");
-        setTimeout(() => conectado && conectar(), 3000);
+        setTimeout(() => { if (S.conectado) conectar(); }, 3000);
       }
     };
   });
@@ -565,27 +774,11 @@ function tratar(msg) {
   switch (msg.tipo) {
     case "status": setStatus(msg.texto, msg.nivel); break;
     case "conexao": setConexao(msg); break;
-    case "historico": {
-      segVela = msg.seg; casas = msg.casas; simboloAtual = msg.simbolo; tfAtual = msg.timeframe;
-      janelaEntrada = msg.janela_entrada || Math.min(60, Math.max(10, msg.seg * 0.25));
-      serie.applyOptions({ priceFormat: { type: "price", precision: casas, minMove: Math.pow(10, -casas) } });
-      barras = msg.velas.map(barra); serie.setData(barras);
-      sinaisMarcados = msg.sinais; assinaturaMarcas = "";
-      desenharMarcadores();
-      if (chart) chart.timeScale().scrollToRealTime();
-      $("vazio").hidden = !!chart;
-      setTxt($("lgAtivo"), `${nomeAtivo(msg.simbolo)} · ${msg.timeframe}`);
-      setTxt($("mAtivo"), `${nomeAtivo(msg.simbolo)} ${msg.timeframe}`);
-      setTxt($("chipAtivo"), `${nomeAtivo(msg.simbolo)} · ${msg.timeframe}`);
-      const ult = msg.velas[msg.velas.length - 1];
-      if (ult) setTxt($("lgPreco"), ult[4].toFixed(casas));
-      marcarTopAtual();
-      break;
-    }
+    case "historico": aplicarHistorico(msg); break;
     case "vela":
       atualizarBarra(msg.v);
-      setTxt($("lgPreco"), msg.v[4].toFixed(casas));
-      if (fechaEm && msg.v[0] + segVela >= fechaEm - 1) velaAtual(msg.v);
+      setTxt($("lgPreco"), msg.v[4].toFixed(S.casas));
+      if (S.fechaEm && msg.v[0] + S.seg >= S.fechaEm - 1) velaAtual(msg.v);
       break;
     case "estado": aplicarEstado(msg); break;
     case "ranking": aplicarRanking(msg); break;
@@ -594,12 +787,31 @@ function tratar(msg) {
     case "aviso": mostrarAviso(msg); break;
     case "top3": aplicarTop(msg); break;
     case "sinal":
-      sinaisMarcados.push({ t: msg.t, id: msg.id, dir: msg.dir, principal: msg.principal });
+      S.sinais.push({ t: msg.t, id: msg.id, dir: msg.dir, principal: msg.principal });
       desenharMarcadores();
       if (msg.registrado) adicionarSinal(msg);
       break;
     case "resultado": aplicarResultado(msg); break;
+    default: break;
   }
+}
+function aplicarHistorico(msg) {
+  S.seg = msg.seg; S.casas = msg.casas; S.simbolo = msg.simbolo; S.tf = msg.timeframe;
+  S.janelaEntrada = msg.janela_entrada || Math.min(60, Math.max(10, msg.seg * 0.25));
+  S.barras = msg.velas.map(barra); S.sinais = msg.sinais; G.assinatura = "";
+  if (G.serie) {
+    G.serie.applyOptions({ priceFormat: { type: "price", precision: S.casas, minMove: Math.pow(10, -S.casas) } });
+    G.serie.setData(S.barras);
+    mostrarUltimasVelas();
+  }
+  desenharMarcadores();
+  $("vazio").hidden = !!G.chart;
+  setTxt($("lgAtivo"), `${nomeAtivo(msg.simbolo)} · ${msg.timeframe}`);
+  setTxt($("mAtivo"), `${nomeAtivo(msg.simbolo)} ${msg.timeframe}`);
+  setTxt($("chipAtivo"), `${nomeAtivo(msg.simbolo)} · ${msg.timeframe}`);
+  const ult = msg.velas[msg.velas.length - 1];
+  if (ult) setTxt($("lgPreco"), ult[4].toFixed(S.casas));
+  marcarTopAtual();
 }
 
 // ================================================================== conectar / parar
@@ -609,112 +821,140 @@ function botaoConectar(ligado) {
   b.classList.toggle("parar", ligado);
   b.querySelector("use").setAttribute("href", ligado ? "#i-stop" : "#i-play");
   setTxt(b.querySelector("span"), ligado ? "Parar" : "Conectar");
-  b.setAttribute("aria-label", ligado ? "Parar" : "Conectar");   // no celular o botão mostra só o ícone
+  b.setAttribute("aria-label", ligado ? "Parar" : "Conectar");
 }
 async function conectar() {
   const simbolo = $("selAtivo").value, tf = timeframeEscolhido();
   if (!simbolo || !tf) { $("dlgAtivo").showModal(); return; }
-  try { audio(); } catch {}   // libera o áudio (precisa de um clique)
-  const exp = Math.max(1, parseInt($("inpExp").value) || 1), payout = Math.min(500, Math.max(1, parseFloat($("inpPayout").value) || 85));
+  try { audio(); } catch { /* sem áudio: os avisos continuam visuais */ }
+  const exp = Math.min(60, Math.max(1, parseInt($("inpExp").value, 10) || 1));
+  const payout = Math.min(500, Math.max(1, parseFloat($("inpPayout").value) || 85));
   store.set("escolha", { mercado: $("selMercado").value, simbolo, tf: $("selTf").value, custom: $("inpTfCustom").value, exp, payout });
-  conectado = true; botaoConectar(true);
-  VEREDITO = null;
+  S.conectado = true; botaoConectar(true);
+  S.veredito = null;
   setTxt($("chipAtivo"), `${nomeAtivo(simbolo)} · ${tf}`);
-  if (simbolo !== simboloAtual) { simboloAtual = simbolo; tfAtual = tf; }
+  if (simbolo !== S.simbolo) { S.simbolo = simbolo; S.tf = tf; }
   mostrarVeredito(vereditoLocal("CARREGANDO"));
   try { await abrirWs(); } catch { return; }
-  enviar({ acao: "assinar", simbolo, timeframe: tf, expiracao: exp, payout, ativas: [...ativas], observacao: modoObs });
+  enviar({ acao: "assinar", simbolo, timeframe: tf, expiracao: exp, payout, ativas: [...S.ativas],
+           observacao: P.obs, avisar_obs: P.avisarObs, limite_formacao: S.limite });
 }
 function parar() {
-  conectado = false; botaoConectar(false);
+  S.conectado = false; botaoConectar(false);
   enviar({ acao: "parar" });
-  fechaEm = null; VEREDITO = null;
+  S.fechaEm = null; S.veredito = null;
   mostrarVeredito(vereditoLocal("INICIO"));
 }
-$("btnConectar").onclick = () => (conectado ? parar() : (DEMO ? null : conectar()));
-$("vAcao").onclick = () => $("dlgAtivo").showModal();
-$("btnAtivo").onclick = () => $("dlgAtivo").showModal();
-$("dlgAtivo").addEventListener("close", () => { if ($("dlgAtivo").returnValue === "conectar" && !DEMO) conectar(); });
 function atualizarBeInfo() {
   const p = Math.min(500, Math.max(1, parseFloat($("inpPayout").value) || 85)) / 100;
   setTxt($("beInfo"), `Com payout de ${num(p * 100, 0)}%, é preciso acertar mais de ${pct(1 / (1 + p), 1)} das operações só para empatar.`);
 }
-$("inpPayout").addEventListener("input", atualizarBeInfo);
 
-// ================================================================== modos, observação e alertas
+// ================================================================== modos, letra, observação e alertas
 function aplicarModo() {
-  document.body.classList.toggle("modo-simples", modo !== "detalhado");
-  $("btnSimples").classList.toggle("on", modo !== "detalhado"); $("btnSimples").setAttribute("aria-pressed", modo !== "detalhado");
-  $("btnDetalhado").classList.toggle("on", modo === "detalhado"); $("btnDetalhado").setAttribute("aria-pressed", modo === "detalhado");
+  const simples = P.modo !== "detalhado";
+  document.body.classList.toggle("modo-simples", simples);
+  $("btnSimples").classList.toggle("on", simples); $("btnSimples").setAttribute("aria-pressed", String(simples));
+  $("btnDetalhado").classList.toggle("on", !simples); $("btnDetalhado").setAttribute("aria-pressed", String(!simples));
 }
-$("btnSimples").onclick = () => { modo = "simples"; store.set("modo", modo); aplicarModo(); };
-$("btnDetalhado").onclick = () => { modo = "detalhado"; store.set("modo", modo); aplicarModo(); };
+function aplicarLetra() {
+  if (!["p", "m", "g"].includes(P.letra)) P.letra = "m";
+  document.documentElement.dataset.letra = P.letra;
+  for (const b of document.querySelectorAll(".grupo-letra button")) b.setAttribute("aria-pressed", String(b.dataset.letra === P.letra));
+  if (G.chart) G.chart.applyOptions({ layout: { fontSize: TAMANHO_FONTE_GRAFICO[P.letra] } });
+}
 function aplicarObs() {
-  $("btnObs").setAttribute("aria-pressed", modoObs);
-  $("btnObs").title = modoObs ? "Modo observação LIGADO: quando nada está comprovado, mostra a melhor candidata (não é recomendação)"
-                              : "Modo observação: mostra a melhor candidata quando nenhuma estratégia está comprovada (não é recomendação)";
+  $("btnObs").setAttribute("aria-pressed", String(P.obs));
+  $("btnObs").title = P.obs ? "Modo observação LIGADO: quando nada está comprovado, mostra a melhor candidata (não é recomendação)"
+                            : "Modo observação: mostra a melhor candidata quando nenhuma estratégia está comprovada (não é recomendação)";
 }
-$("btnObs").onclick = () => {
-  modoObs = !modoObs; store.set("observacao", modoObs); aplicarObs();
-  if (DEMO) { if (DEMO === "aguardar" || DEMO === "observacao") irDemo(modoObs ? "observacao" : "aguardar"); return; }
-  enviar({ observacao: modoObs });
-  aviso(modoObs ? "Modo observação ligado" : "Modo observação desligado",
-        modoObs ? "Quando nenhuma estratégia estiver comprovada, você verá a melhor candidata, marcada como NÃO COMPROVADA. Sem som de entrada."
-                : "O veredito volta a mostrar só o que tem vantagem comprovada.", "", "i-olho");
-};
-$("chkTodos").checked = mostrarTodos;
-$("chkTodos").onchange = () => { mostrarTodos = $("chkTodos").checked; store.set("todosSinais", mostrarTodos); desenharMarcadores(); };
-
+function aplicarTodos() {
+  $("chkTodos").checked = P.todos;
+  document.body.classList.toggle("todos-sinais", P.todos);
+}
 function atualizarBotaoNotif() {
   const b = $("btnNotif");
   if (!("Notification" in window)) { b.textContent = "Sem notificações"; b.disabled = true; return; }
   b.textContent = Notification.permission === "granted" ? "Notificações permitidas" : Notification.permission === "denied" ? "Notificações bloqueadas" : "Permitir notificações";
   b.disabled = Notification.permission !== "default";
 }
-$("btnAlertas").onclick = () => { atualizarBotaoNotif(); $("dlgAlertas").showModal(); };
-$("chkSom").checked = somLigado;
-$("chkSom").onchange = () => { somLigado = $("chkSom").checked; store.set("som", somLigado); if (somLigado) somPreparo(); };
-$("inpVolume").value = volume; setTxt($("volTxt"), `${volume}%`);
-$("inpVolume").oninput = () => { volume = Number($("inpVolume").value); store.set("volume", volume); setTxt($("volTxt"), `${volume}%`); };
-$("inpVolume").onchange = () => somPreparo(true);
-$("btnNotif").onclick = async () => { if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission(); atualizarBotaoNotif(); };
-$("btnTestar").onclick = async () => {
+async function testarAlertas() {
   const b = $("btnTestar"); b.disabled = true;
-  try { audio(); } catch {}
-  if ("Notification" in window && Notification.permission === "default") { try { await Notification.requestPermission(); } catch {} atualizarBotaoNotif(); }
-  const espera = (ms) => new Promise((r) => setTimeout(r, ms));
-  if (actx && actx.state !== "running") aviso("Áudio bloqueado", "O navegador bloqueou o som. Clique na página e tente de novo.", "erro", "i-alerta");
-  if (!somLigado) aviso("Som desligado", "O teste toca mesmo assim, mas nos sinais reais você não ouviria nada.", "prep", "i-alerta", 10000);
-  aviso("1 · Som de preparo", "Suave: toca quando aparece SE PREPARANDO.", "prep", "i-ampulheta", 6000);
-  somPreparo(true); await espera(1500);
-  aviso("2 · Som de entrada", "Toca no ENTRAR AGORA (COMPRA sobe o tom, VENDA desce).", "CALL", "i-cima", 6000);
-  somEntrada("CALL", true); await espera(1500);
-  if (!("Notification" in window)) aviso("3 · Notificação", "Este navegador não tem notificações.", "erro", "i-alerta", 10000);
-  else if (Notification.permission === "granted") {
-    notificar("Teste de alerta · Farol", "Se você está vendo isto, as notificações funcionam.", true);
-    aviso("3 · Notificação enviada", "Deve aparecer no canto da tela. Se não aparecer, confira o modo Não perturbe do sistema.", "", "i-sino", 10000);
-  } else aviso("3 · Notificações bloqueadas", "Clique no cadeado ao lado do endereço e permita notificações.", "erro", "i-alerta", 12000);
+  try { audio(); } catch { /* sem áudio */ }
+  if ("Notification" in window && Notification.permission === "default") {
+    try { await Notification.requestPermission(); } catch { /* o navegador recusou o pedido */ }
+    atualizarBotaoNotif();
+  }
+  if (A.ctx && A.ctx.state !== "running") toast("Áudio bloqueado", "O navegador bloqueou o som. Clique na página e tente de novo.", "erro", "i-alerta");
+  if (!P.som) toast("Som desligado", "O teste toca mesmo assim, mas nos avisos reais você não ouviria nada.", "prep", "i-alerta", 10000);
+  try {
+    const lista = await (await fetch("/api/avisos/teste")).json();
+    for (const a of lista) { mostrarAviso(a, true); await espera(1800); }
+  } catch (e) { toast("Teste indisponível", "Não foi possível falar com o servidor local.", "erro", "i-alerta"); }
+  if (!("Notification" in window)) toast("Notificações", "Este navegador não tem notificações.", "erro", "i-alerta", 10000);
+  else if (Notification.permission !== "granted") toast("Notificações bloqueadas", "Clique no cadeado ao lado do endereço e permita notificações.", "erro", "i-alerta", 12000);
   b.disabled = false;
-};
+}
+function ligarControles() {
+  $("btnConectar").onclick = () => { if (S.conectado) parar(); else if (!DEMO) conectar(); };
+  $("vAcao").onclick = () => $("dlgAtivo").showModal();
+  $("btnAtivo").onclick = () => $("dlgAtivo").showModal();
+  $("dlgAtivo").addEventListener("close", () => { if ($("dlgAtivo").returnValue === "conectar" && !DEMO) conectar(); });
+  $("inpPayout").addEventListener("input", atualizarBeInfo);
+  $("btnSimples").onclick = () => { P.modo = "simples"; store.set("modo", P.modo); aplicarModo(); };
+  $("btnDetalhado").onclick = () => { P.modo = "detalhado"; store.set("modo", P.modo); aplicarModo(); };
+  for (const b of document.querySelectorAll(".grupo-letra button")) b.onclick = () => { P.letra = b.dataset.letra; store.set("letra", P.letra); aplicarLetra(); };
+  $("btnObs").onclick = () => {
+    P.obs = !P.obs; store.set("observacao", P.obs); aplicarObs();
+    if (DEMO) { if (DEMO === "aguardar" || DEMO === "observacao") irDemo(P.obs ? "observacao" : "aguardar"); return; }
+    enviarPreferencias();
+    toast(P.obs ? "Modo observação ligado" : "Modo observação desligado",
+          P.obs ? "Quando nenhuma estratégia estiver comprovada, você verá a melhor candidata, marcada como NÃO COMPROVADA. Sem som de entrada."
+                : "O veredito volta a mostrar só o que tem vantagem comprovada.", "discreto", "i-olho");
+  };
+  $("chkTodos").onchange = () => { P.todos = $("chkTodos").checked; store.set("todosSinais.v2", P.todos); aplicarTodos(); G.assinatura = ""; desenharMarcadores(); };
+  $("btnAlertas").onclick = () => { atualizarBotaoNotif(); $("dlgAlertas").showModal(); };
+  $("chkSom").checked = P.som;
+  $("chkSom").onchange = () => { P.som = $("chkSom").checked; store.set("som", P.som); if (P.som) tocar("formando"); };
+  $("inpVolume").value = P.volume; setTxt($("volTxt"), `${P.volume}%`);
+  $("inpVolume").oninput = () => { P.volume = Number($("inpVolume").value); store.set("volume", P.volume); setTxt($("volTxt"), `${P.volume}%`); };
+  $("inpVolume").onchange = () => tocar("formando", true);
+  $("inpLimite").oninput = () => { S.limite = Number($("inpLimite").value); setTxt($("limiteTxt"), `${S.limite}%`); };
+  $("inpLimite").onchange = () => { P.limite = S.limite; store.set("limite", P.limite); enviarPreferencias(); if (S.veredito) { assinaturaVeredito = ""; mostrarVeredito(S.veredito); } };
+  $("chkAvisarObs").checked = P.avisarObs;
+  $("chkAvisarObs").onchange = () => { P.avisarObs = $("chkAvisarObs").checked; store.set("avisarObs", P.avisarObs); enviarPreferencias(); };
+  $("btnNotif").onclick = async () => { if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission(); atualizarBotaoNotif(); };
+  $("btnTestar").onclick = testarAlertas;
+  const subir = () => scrollTo({ top: 0, behavior: movimentoReduzido() ? "auto" : "smooth" });
+  $("vbSubir").onclick = subir;
+  $("vBarra").addEventListener("click", (e) => { if (!e.target.closest("button")) subir(); });
+}
+const movimentoReduzido = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ================================================================== tour de primeira visita
 const PASSOS = [
-  { alvo: "veredito", titulo: "Bem-vindo ao Farol", texto: "O Farol só acende quando os dados sustentam. Este cartão diz, em português simples, o que fazer agora: ENTRAR, SE PREPARANDO, AGUARDAR ou CONFLITO. ENTRAR só aparece quando uma estratégia tem vantagem comprovada no histórico, e sempre com a probabilidade estimada e a margem de erro." },
-  { alvo: "grafico", titulo: "O gráfico", texto: "Velas ao vivo. A linha tracejada marca o fim da vela atual, com a contagem. As setas mostram só o sinal principal (★) e os sinais da estratégia líder." },
-  { alvo: "top", titulo: "Top 3 ativos", texto: "Os ativos com o melhor cenário agora, com nota de 0 a 100 (o ? explica a regra). Toque em um para trocar o gráfico." },
-  { alvo: "modos", titulo: "Simples ou Detalhado", texto: "No Detalhado você vê quem está acertando mais, o mercado em palavras simples e as suas operações. Em Alertas você testa o som. O botão ? reabre este guia." },
+  { alvo: "veredito", titulo: "Bem-vindo ao Farol", texto: "O Farol só acende quando os dados sustentam. Este cartão diz, em português simples, o que fazer agora: ENTRAR, SE PREPARANDO, AGUARDAR ou CONFLITO. ENTRAR só aparece quando a estratégia líder tem vantagem comprovada, sempre com a probabilidade estimada e a margem de erro. Ao rolar a página, ele vira uma barra fixa no topo." },
+  { alvo: "grafico", titulo: "O gráfico", texto: "Velas ao vivo. A linha tracejada marca o fim da vela atual, com a contagem. As setas mostram só a entrada avisada (★) e os sinais da estratégia líder. Ligando “Mostrar todos os sinais”, vários sinais na mesma vela viram uma seta com “×N”; passe o mouse para ver a lista." },
+  { alvo: "top", titulo: "Top 3 ativos", texto: "Os ativos com o melhor cenário agora, com nota de 0 a 100 e o motivo de cada parte da nota. Toque em um para trocar o gráfico." },
+  { alvo: "alertas", titulo: "Avisos só da líder", texto: "Só a estratégia líder avisa: quando está se formando, quando é hora de entrar e o resultado. Sem vantagem comprovada, silêncio. Aqui você testa os sons e escolhe a partir de quanto % de formação quer ser avisado." },
+  { alvo: "modos", titulo: "Simples, Detalhado e tamanho da letra", texto: "No Detalhado você vê o ranking das estratégias, o mercado em palavras simples e as suas operações. Use P, M e G para o tamanho da letra. O botão ? reabre este guia." },
 ];
-let passoTour = 0;
-function abrirTour() { passoTour = 0; $("tour").hidden = false; mostrarPasso(); }
-function fecharTour() { $("tour").hidden = true; store.set("tourVisto", true); }
+const T = { passo: 0 };
+function abrirTour() { T.passo = 0; $("tour").hidden = false; mostrarPasso(); }
+function fecharTour() {
+  $("tour").hidden = true; store.set("tourVisto", true);
+  scrollTo({ top: 0, behavior: movimentoReduzido() ? "auto" : "smooth" });   // volta ao veredito
+}
 function mostrarPasso() {
-  const p = PASSOS[passoTour], alvo = document.querySelector(`[data-tour="${p.alvo}"]`);
-  setTxt($("tourPasso"), `PASSO ${passoTour + 1} DE ${PASSOS.length} · COMO LER ESTA TELA`);
+  const p = PASSOS[T.passo], alvo = document.querySelector(`[data-tour="${p.alvo}"]`);
+  setTxt($("tourPasso"), `PASSO ${T.passo + 1} DE ${PASSOS.length} · COMO LER ESTA TELA`);
   setTxt($("tourTitulo"), p.titulo); setTxt($("tourTexto"), p.texto);
-  $("tourVoltar").hidden = passoTour === 0;
-  setTxt($("tourProximo"), passoTour === PASSOS.length - 1 ? "Entendi" : "Próximo");
-  alvo.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  setTimeout(() => posicionarTour(alvo), 350);
+  $("tourVoltar").hidden = T.passo === 0;
+  setTxt($("tourProximo"), T.passo === PASSOS.length - 1 ? "Entendi" : "Próximo");
+  const r = alvo.getBoundingClientRect();
+  const visivel = r.top >= alturaTopo() && r.bottom <= innerHeight - 50;
+  if (!visivel) alvo.scrollIntoView({ block: "center", behavior: movimentoReduzido() ? "auto" : "smooth" });
+  setTimeout(() => posicionarTour(alvo), visivel ? 30 : 380);
 }
 function posicionarTour(alvo) {
   if ($("tour").hidden) return;
@@ -727,12 +967,13 @@ function posicionarTour(alvo) {
   const x = Math.max(16, Math.min(innerWidth - cr.width - 16, r.left));
   Object.assign(c.style, { left: `${x}px`, top: `${y}px` });
 }
-$("btnTour").onclick = abrirTour;
-$("tourPular").onclick = fecharTour;
-$("tourVoltar").onclick = () => { passoTour = Math.max(0, passoTour - 1); mostrarPasso(); };
-$("tourProximo").onclick = () => { if (passoTour >= PASSOS.length - 1) fecharTour(); else { passoTour++; mostrarPasso(); } };
-addEventListener("resize", () => { if (!$("tour").hidden) posicionarTour(document.querySelector(`[data-tour="${PASSOS[passoTour].alvo}"]`)); posicionarLinhaEntrada(); });
-addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("tour").hidden) fecharTour(); });
+function ligarTour() {
+  $("btnTour").onclick = abrirTour;
+  $("tourPular").onclick = fecharTour;
+  $("tourVoltar").onclick = () => { T.passo = Math.max(0, T.passo - 1); mostrarPasso(); };
+  $("tourProximo").onclick = () => { if (T.passo >= PASSOS.length - 1) fecharTour(); else { T.passo++; mostrarPasso(); } };
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("tour").hidden) fecharTour(); });
+}
 
 // ================================================================== demonstração (?demo=entrar)
 const CENARIOS = { entrar: "Entrar", preparando: "Se preparando", aguardar: "Aguardar", conflito: "Conflito", observacao: "Observação" };
@@ -741,20 +982,23 @@ async function iniciarDemo() {
   $("faixaDemo").hidden = false;
   const nav = $("demoCenarios");
   for (const [c, nome] of Object.entries(CENARIOS)) {
-    const a = el("a", c === DEMO ? "on" : "", nome); const u = new URL(location.href); u.searchParams.set("demo", c); a.href = u.toString(); nav.appendChild(a);
+    const u = new URL(location.href); u.searchParams.set("demo", c);
+    const a = el("a", c === DEMO ? "on" : "", nome); a.href = u.toString();
+    if (c === DEMO) a.setAttribute("aria-current", "page");
+    nav.appendChild(a);
   }
-  modoObs = DEMO === "observacao"; aplicarObs();
-  conectado = true; botaoConectar(true);
+  P.obs = DEMO === "observacao"; aplicarObs();
+  S.conectado = true; botaoConectar(true);
   try {
     const msgs = await (await fetch(`/api/demo/${encodeURIComponent(DEMO)}`)).json();
     if (!Array.isArray(msgs)) throw new Error(msgs.erro || "cenário inválido");
     msgs.forEach(tratar);
-  } catch (e) { aviso("Demonstração indisponível", String(e.message || e), "erro", "i-alerta"); }
+  } catch (e) { toast("Demonstração indisponível", String(e.message || e), "erro", "i-alerta"); }
 }
 
 // ================================================================== seletores e início
 function preencherAtivos() {
-  const lista = ATIVOS.filter((a) => a.market_display_name === $("selMercado").value);
+  const lista = S.ativos.filter((a) => a.market_display_name === $("selMercado").value);
   const sel = $("selAtivo"); sel.replaceChildren();
   let grupo = null, og = null;
   for (const a of lista) {
@@ -762,31 +1006,18 @@ function preencherAtivos() {
     og.appendChild(new Option(`${a.display_name}${a.exchange_is_open ? "" : "  (fechado)"}`, a.symbol));
   }
 }
-async function init() {
-  aplicarModo(); aplicarObs();
-  CONFIG = await (await fetch("/api/config")).json();
-  const salvas = store.get("ativas", null);
-  ativas = new Set(salvas ? salvas.filter((id) => CONFIG.estrategias.some((e) => e.id === id)) : CONFIG.estrategias.map((e) => e.id));
-  $("qTop").dataset.dica = "Pontuação de 0 a 100:\n• " + CONFIG.regra_scanner.join("\n• ");
-  const tfs = $("selTf");
-  for (const tf of CONFIG.timeframes) tfs.add(new Option(tf, tf));
-  tfs.add(new Option("Personalizado…", "custom"));
-  tfs.onchange = () => ($("campoTfCustom").hidden = tfs.value !== "custom");
-  const escolha = store.get("escolha", { mercado: null, simbolo: "frxEURUSD", tf: "M5", custom: "", exp: 1, payout: 85 });
-  tfs.value = escolha.tf || "M5"; $("inpTfCustom").value = escolha.custom || ""; $("inpExp").value = escolha.exp || 1;
-  $("inpPayout").value = escolha.payout || Math.round(CONFIG.payout * 100);
-  $("campoTfCustom").hidden = tfs.value !== "custom";
-  atualizarBeInfo();
-  if (!store.get("tourVisto", false) && params.get("tour") !== "0") setTimeout(abrirTour, 600);
-  if (DEMO) { iniciarDemo(); return; }
-  mostrarVeredito(vereditoLocal("INICIO"));
-  setTxt($("chipAtivo"), `${nomeAtivo(escolha.simbolo || "frxEURUSD")} · ${escolha.tf === "custom" ? escolha.custom : escolha.tf || "M5"}`);
+function medirTopo() {
+  const atualizar = () => document.documentElement.style.setProperty("--altura-topo", `${alturaTopo()}px`);
+  atualizar();
+  if ("ResizeObserver" in window) new ResizeObserver(atualizar).observe($("topo"));
+}
+async function carregarAtivos(escolha) {
   try {
     const r = await fetch("/api/ativos");
     const dados = await r.json();
     if (!r.ok) throw new Error(dados.erro || r.status);
-    ATIVOS = dados;
-    NOMES = Object.fromEntries(ATIVOS.map((a) => [a.symbol, a.display_name]));
+    S.ativos = dados;
+    S.nomes = Object.fromEntries(S.ativos.map((a) => [a.symbol, a.display_name]));
   } catch (e) {
     setStatus("Não foi possível listar os ativos da Deriv: " + e.message, "erro");
     $("selMercado").replaceChildren(new Option("—", ""));
@@ -794,15 +1025,53 @@ async function init() {
     $("selAtivo").replaceChildren(new Option(sim, sim));
     return;
   }
-  const mercados = [...new Set(ATIVOS.map((a) => a.market_display_name))];
+  const mercados = [...new Set(S.ativos.map((a) => a.market_display_name))];
   const selM = $("selMercado"); selM.replaceChildren();
   mercados.forEach((m) => selM.add(new Option(m, m)));
-  const doSimbolo = ATIVOS.find((a) => a.symbol === escolha.simbolo);
+  const doSimbolo = S.ativos.find((a) => a.symbol === escolha.simbolo);
   selM.value = doSimbolo ? doSimbolo.market_display_name : (escolha.mercado && mercados.includes(escolha.mercado) ? escolha.mercado : mercados[0]);
   preencherAtivos();
   if (doSimbolo) $("selAtivo").value = escolha.simbolo;
   selM.onchange = preencherAtivos;
   setTxt($("chipAtivo"), `${nomeAtivo($("selAtivo").value)} · ${timeframeEscolhido()}`);
+}
+async function init() {
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";   // abre sempre no topo
+  scrollTo(0, 0);
+  medirTopo();
+  aplicarLetra(); aplicarModo(); aplicarObs(); aplicarTodos();
+  criarGrafico();
+  ligarDicas(); ligarControles(); ligarTour();
+  addEventListener("scroll", () => requestAnimationFrame(atualizarBarraCompacta), { passive: true });
+  addEventListener("resize", () => {
+    if (!$("tour").hidden) posicionarTour(document.querySelector(`[data-tour="${PASSOS[T.passo].alvo}"]`));
+    posicionarLinhaEntrada(); atualizarBarraCompacta();
+  });
+  setInterval(atualizarRelogio, 250);
+  S.config = await (await fetch("/api/config")).json();
+  const cfg = S.config;
+  const salvas = store.get("ativas", null);
+  S.ativas = new Set(salvas ? salvas.filter((id) => cfg.estrategias.some((e) => e.id === id)) : cfg.estrategias.map((e) => e.id));
+  const [lmin, lmax] = cfg.limite_formacao_faixa || [50, 100];
+  S.limite = Math.min(lmax, Math.max(lmin, P.limite || cfg.limite_formacao || 70));
+  $("inpLimite").min = lmin; $("inpLimite").max = lmax; $("inpLimite").value = S.limite; setTxt($("limiteTxt"), `${S.limite}%`);
+  $("qProgresso").dataset.dica = cfg.explicacao_progresso; $("qLimite").dataset.dica = cfg.explicacao_progresso;
+  $("qTop").dataset.dica = "Nota de 0 a 100:\n• " + cfg.regra_scanner.join("\n• ");
+  const tfs = $("selTf");
+  for (const tf of cfg.timeframes) tfs.add(new Option(tf, tf));
+  tfs.add(new Option("Personalizado…", "custom"));
+  tfs.onchange = () => { $("campoTfCustom").hidden = tfs.value !== "custom"; };
+  const escolha = store.get("escolha", { mercado: null, simbolo: "frxEURUSD", tf: "M5", custom: "", exp: 1, payout: 85 });
+  tfs.value = escolha.tf || "M5"; $("inpTfCustom").value = escolha.custom || ""; $("inpExp").value = escolha.exp || 1;
+  $("inpPayout").value = escolha.payout || Math.round(cfg.payout * 100);
+  $("campoTfCustom").hidden = tfs.value !== "custom";
+  atualizarBeInfo();
+  if ((!store.get("tourVisto", false) && params.get("tour") !== "0") || params.get("tour") === "1") setTimeout(abrirTour, 600);
+  if (DEMO) { iniciarDemo(); return; }
+  mostrarVeredito(vereditoLocal("INICIO"));
+  setTxt($("chipAtivo"), `${nomeAtivo(escolha.simbolo || "frxEURUSD")} · ${escolha.tf === "custom" ? escolha.custom : escolha.tf || "M5"}`);
+  await carregarAtivos(escolha);
   if (params.has("auto")) conectar();   // ex.: /?auto
 }
 init();
+})();

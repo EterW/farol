@@ -474,7 +474,8 @@ class Sessao:
                     if sim not in prontas:
                         motivo = s.erro or "carregando histórico..."
                         resultados.append({"simbolo": sim, "aberto": None, "pontos": 0, "elegivel": False,
-                                           "motivo": motivo, "componentes": {}, "adx": None, "resumo": motivo})
+                                           "motivo": motivo, "componentes": {}, "explicacao": [], "adx": None,
+                                           "resumo": motivo, "spark": [], "variacao": None})
                 ordenados = scanner.ordenar(resultados)
                 await self.enviar("top3", itens=[r for r in ordenados if r["elegivel"]][:3], todos=ordenados,
                                   regra=scanner.REGRA, timeframe=self.tf, atualizado=time.time(),

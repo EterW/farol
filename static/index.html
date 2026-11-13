@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-letra="m">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -14,9 +14,10 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body class="modo-simples">
+<a class="pular" href="#principal">Pular para o conteúdo</a>
 
-<!-- ícones (desenhados aqui, sem dependência externa) -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<!-- ícones (desenhados aqui, sem dependência externa; sempre acompanhados de texto ou aria-label) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
   <defs>
     <symbol id="i-cima" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-baixo" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -45,7 +46,7 @@
 </div>
 
 <!-- ============================================================ topo -->
-<header class="topo">
+<header class="topo" id="topo">
   <a class="logo" href="/" aria-label="Farol, página inicial">
     <svg class="logo-simbolo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
       <defs>
@@ -64,38 +65,48 @@
     <span class="logo-texto"><b>Farol</b><small>Sinais com evidência estatística, sem promessa</small></span>
   </a>
 
-  <button class="chip-ativo" id="btnAtivo" aria-haspopup="dialog" data-tour="ativo">
-    <span class="chip-rotulo">Ativo</span>
-    <b id="chipAtivo">Escolher</b>
-    <svg class="ic"><use href="#i-chevron"/></svg>
-  </button>
-  <button class="botao botao-marca" id="btnConectar"><svg class="ic"><use href="#i-play"/></svg><span>Conectar</span></button>
-
-  <div class="espaco"></div>
-
-  <div class="conexao" id="conexao" title="Conexão com a Deriv" role="status">
-    <i class="ponto" id="pontoDeriv"></i><span id="txtDeriv">Desconectado</span>
+  <div class="topo-acoes">
+    <button class="chip-ativo" id="btnAtivo" aria-haspopup="dialog" data-tour="ativo">
+      <span class="chip-rotulo">Ativo</span>
+      <b id="chipAtivo">Escolher</b>
+      <svg class="ic" aria-hidden="true"><use href="#i-chevron"/></svg>
+    </button>
+    <button class="botao botao-marca" id="btnConectar" aria-label="Conectar"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg><span>Conectar</span></button>
+    <span class="espaco"></span>
+    <div class="conexao" id="conexao" role="status" aria-live="polite">
+      <i class="ponto" id="pontoDeriv" aria-hidden="true"></i><span id="txtDeriv">Desconectado</span>
+    </div>
+    <button class="botao botao-icone" id="btnObs" aria-pressed="false" aria-label="Modo observação">
+      <svg class="ic" aria-hidden="true"><use href="#i-olho"/></svg><span class="rotulo-largo">Observação</span>
+    </button>
+    <button class="botao botao-icone" id="btnAlertas" aria-haspopup="dialog" aria-label="Alertas e avisos" data-tour="alertas">
+      <svg class="ic" aria-hidden="true"><use href="#i-sino"/></svg><span class="rotulo-largo">Alertas</span>
+    </button>
+    <button class="botao botao-icone" id="btnTour" aria-label="Como ler esta tela"><svg class="ic" aria-hidden="true"><use href="#i-ajuda"/></svg></button>
   </div>
-
-  <div class="segmentado" role="group" aria-label="Modo de visualização" data-tour="modos">
-    <button id="btnSimples" class="on" aria-pressed="true">Simples</button>
-    <button id="btnDetalhado" aria-pressed="false">Detalhado</button>
-  </div>
-  <button class="botao botao-icone" id="btnObs" aria-pressed="false" title="Modo observação: mostra a melhor candidata quando nenhuma estratégia está comprovada (não é recomendação)">
-    <svg class="ic"><use href="#i-olho"/></svg><span class="rotulo-largo">Observação</span>
-  </button>
-  <button class="botao botao-icone" id="btnAlertas" aria-haspopup="dialog" title="Sons e alertas" data-tour="alertas">
-    <svg class="ic"><use href="#i-sino"/></svg><span class="rotulo-largo">Alertas</span>
-  </button>
-  <button class="botao botao-icone" id="btnTour" title="Como ler esta tela"><svg class="ic"><use href="#i-ajuda"/></svg></button>
 </header>
 
-<main class="palco">
+<!-- barra compacta do veredito: aparece fixa quando o cartão grande sai da tela ao rolar -->
+<div class="v-barra" id="vBarra" hidden>
+  <span class="vb-icone" id="vbIcone" aria-hidden="true"><svg><use href="#i-pausa"/></svg></span>
+  <b class="vb-titulo" id="vbTitulo">—</b>
+  <span class="vb-dir" id="vbDir" hidden></span>
+  <span class="vb-info" id="vbInfo"></span>
+  <span class="espaco"></span>
+  <span class="vb-tempo"><small id="vbTempoRotulo">vela fecha em</small><b id="vbTempo">--:--</b></span>
+  <button class="botao botao-icone vb-subir" id="vbSubir" aria-label="Voltar ao veredito completo"><svg class="ic" aria-hidden="true"><use href="#i-cima"/></svg></button>
+</div>
+
+<main class="palco" id="principal" tabindex="-1">
   <!-- ============================================================ veredito -->
-  <section class="veredito INICIO" id="veredito" aria-live="polite" data-tour="veredito">
+  <section class="veredito INICIO" id="veredito" aria-live="polite" aria-label="Veredito agora" data-tour="veredito">
     <div class="v-brilho" aria-hidden="true"></div>
     <div class="v-corpo">
-      <div class="v-sobre"><span id="vContexto">Agora</span><span class="fita" id="vFita" hidden></span></div>
+      <div class="v-sobre">
+        <span id="vContexto">Agora</span>
+        <span class="chip-lider" id="vLider" hidden></span>
+        <span class="fita" id="vFita" hidden></span>
+      </div>
       <div class="v-linha-titulo">
         <span class="v-icone" id="vIcone" aria-hidden="true"><svg><use href="#i-play"/></svg></span>
         <h1 class="v-titulo" id="vTitulo">Escolha um ativo para começar</h1>
@@ -103,9 +114,21 @@
       </div>
       <p class="v-frase" id="vFrase">Toque em <b>Conectar</b>. O Farol analisa o histórico e só sugere entrada quando uma estratégia tem vantagem comprovada.</p>
 
+      <div class="v-formacao" id="vFormacao" hidden>
+        <div class="v-form-topo">
+          <span class="v-rotulo">Progresso de formação <button type="button" class="q" id="qProgresso" aria-label="Como o progresso é calculado" data-dica="">?</button></span>
+          <b class="v-form-pct" id="vFormPct">0%</b>
+          <small id="vFormInfo"></small>
+        </div>
+        <div class="barra-form" id="vFormBarra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progresso de formação">
+          <i class="bf-preench"></i><i class="bf-limite"></i>
+        </div>
+        <ul class="v-condicoes" id="vCondicoes"></ul>
+      </div>
+
       <div class="v-prob" id="vProb" hidden>
         <div class="v-prob-num">
-          <span class="v-prob-rotulo">Probabilidade estimada <button class="q" data-dica="Taxa de acerto desta estratégia nas últimas velas, calculada a partir do histórico. A faixa mostra a margem de erro (95% de confiança). Não é previsão nem promessa.">?</button></span>
+          <span class="v-rotulo">Probabilidade estimada <button type="button" class="q" aria-label="O que é a probabilidade estimada" data-dica="Taxa de acerto desta estratégia nas últimas velas, calculada a partir do histórico. A faixa mostra a margem de erro (95% de confiança). Não é previsão nem promessa.">?</button></span>
           <span class="v-prob-valor"><b id="vProbValor">—</b><small id="vProbFaixa"></small></span>
         </div>
         <div class="faixa-prob grande" id="vFaixa" aria-hidden="true"></div>
@@ -116,10 +139,11 @@
         </ul>
         <div class="v-avisos" id="vAvisos"></div>
       </div>
+      <p class="v-outras so-detalhado" id="vOutras" hidden></p>
       <button class="botao botao-marca grande" id="vAcao">Escolher ativo e conectar</button>
     </div>
 
-    <div class="anel" id="anel" aria-label="Tempo da vela">
+    <div class="anel" id="anel" role="timer" aria-label="Tempo da vela">
       <svg viewBox="0 0 200 200" aria-hidden="true">
         <circle class="anel-trilho" cx="100" cy="100" r="88"/>
         <circle class="anel-progresso" id="anelProgresso" cx="100" cy="100" r="88"/>
@@ -131,116 +155,130 @@
     </div>
   </section>
 
-  <p class="resumo-mercado" id="resumoSimples"><svg class="ic"><use href="#i-onda"/></svg><span id="resumoTexto">O resumo do mercado aparece depois de conectar.</span></p>
-
-  <!-- ============================================================ gráfico + top 3 -->
-  <div class="grade">
-    <section class="cartao grafico-cartao" id="cartaoGrafico" data-tour="grafico">
-      <header class="cartao-topo">
-        <div class="legenda"><b id="lgAtivo">Gráfico</b><span class="numero" id="lgPreco"></span></div>
-        <label class="interruptor"><input type="checkbox" id="chkTodos"><span>Mostrar todos os sinais</span></label>
-      </header>
-      <div class="grafico-area">
-        <div id="grafico"></div>
-        <div class="linha-entrada" id="linhaEntrada" hidden><span id="linhaEntradaTxt"></span></div>
-        <div class="vazio" id="vazio">Conecte para ver o gráfico ao vivo.</div>
-      </div>
-      <footer class="grafico-legenda">
-        <span><i class="marca-princ">★</i> sinal principal</span>
-        <span><i class="marca-lider"></i> sinais da estratégia líder</span>
-        <span><i class="marca-linha"></i> próxima vela</span>
-        <a class="atribuicao" href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Gráfico: TradingView Lightweight Charts™</a>
-      </footer>
-    </section>
-
-    <section class="cartao top" id="cartaoTop" data-tour="top">
-      <header class="cartao-topo">
-        <h2>Top 3 ativos agora <button class="q" id="qTop" data-dica="">?</button></h2>
-        <small id="topInfo"></small>
-      </header>
-      <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
-    </section>
+  <!-- ============================================================ barra de ferramentas -->
+  <div class="ferramentas">
+    <p class="resumo-mercado" id="resumoSimples"><svg class="ic" aria-hidden="true"><use href="#i-onda"/></svg><span id="resumoTexto">O resumo do mercado aparece depois de conectar.</span></p>
+    <div class="grupo-letra" role="group" aria-label="Tamanho da letra">
+      <span aria-hidden="true">Letra</span>
+      <button type="button" data-letra="p" aria-pressed="false" aria-label="Letra pequena">P</button>
+      <button type="button" data-letra="m" aria-pressed="true" aria-label="Letra média">M</button>
+      <button type="button" data-letra="g" aria-pressed="false" aria-label="Letra grande">G</button>
+    </div>
+    <div class="segmentado" role="group" aria-label="Modo de visualização" data-tour="modos">
+      <button type="button" id="btnSimples" class="on" aria-pressed="true">Simples</button>
+      <button type="button" id="btnDetalhado" aria-pressed="false">Detalhado</button>
+    </div>
   </div>
 
-  <!-- ============================================================ painéis do modo detalhado -->
-  <div class="grade so-detalhado">
-    <section class="cartao ranking" id="cartaoRanking">
-      <header class="cartao-topo">
-        <div>
-          <h2>Quem está acertando mais</h2>
-          <p class="sub" id="rkSub">Acerto estimado nas últimas 500 velas. A faixa é a margem de erro; a linha é o mínimo para lucrar.</p>
+  <!-- ============================================================ conteúdo -->
+  <div class="layout">
+    <div class="col-principal">
+      <section class="cartao grafico-cartao" id="cartaoGrafico" data-tour="grafico" aria-label="Gráfico ao vivo">
+        <header class="cartao-topo">
+          <div class="legenda"><h2 id="lgAtivo">Gráfico</h2><span class="numero" id="lgPreco"></span></div>
+          <label class="interruptor"><input type="checkbox" id="chkTodos"><span>Mostrar todos os sinais</span></label>
+        </header>
+        <div class="grafico-area">
+          <div id="grafico"></div>
+          <div class="linha-entrada" id="linhaEntrada" hidden><span id="linhaEntradaTxt"></span></div>
+          <div class="dica-grafico" id="dicaGrafico" hidden></div>
+          <div class="vazio" id="vazio">Conecte para ver o gráfico ao vivo.</div>
         </div>
-        <div class="rk-escala" aria-hidden="true"><i class="rk-esc-faixa"></i>margem de erro <i class="rk-esc-be"></i>mínimo p/ lucrar</div>
-      </header>
-      <ol class="rk-lista" id="rkLista"><li class="vazio-txt">Conecte para calcular.</li></ol>
-      <details class="detalhes">
-        <summary>Ver números completos e escolher estratégias</summary>
-        <p class="sub" id="rkCriterio"></p>
-        <div class="tabela-rolagem"><table class="tabela" id="rkTabela"></table></div>
-        <p class="sub">Desmarcar uma estratégia tira ela do veredito e do cálculo de conflito. Com 11 estratégias testadas, uma pode passar no critério por sorte; confirme com <code>python validar.py</code>.</p>
-      </details>
-    </section>
+        <footer class="grafico-legenda">
+          <span><i class="marca-princ" aria-hidden="true">★</i> entrada avisada</span>
+          <span><i class="marca-lider" aria-hidden="true"></i> sinais da estratégia líder</span>
+          <span class="leg-todos"><b aria-hidden="true">×3</b> vários sinais na mesma vela (passe o mouse)</span>
+          <span><i class="marca-linha" aria-hidden="true"></i> fim da vela atual</span>
+          <a class="atribuicao" href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Gráfico: TradingView Lightweight Charts™</a>
+        </footer>
+      </section>
 
-    <div class="coluna">
-      <section class="cartao mercado" id="cartaoMercado">
-        <header class="cartao-topo"><h2>Mercado em palavras simples</h2><small id="mAtivo"></small></header>
+      <section class="cartao mercado so-detalhado" id="cartaoMercado" aria-labelledby="tMercado">
+        <header class="cartao-topo"><h2 id="tMercado">Mercado em palavras simples</h2><small id="mAtivo"></small></header>
         <div class="m-cartoes">
           <div class="m-cartao" id="mTend">
             <span class="m-rotulo">Tendência</span>
-            <span class="m-valor"><svg class="ic"><use href="#i-lado"/></svg><b>—</b></span>
-            <span class="medidor" data-n="0"><i></i><i></i><i></i></span>
+            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-lado"/></svg><b>—</b></span>
+            <span class="medidor" data-n="0" aria-hidden="true"><i></i><i></i><i></i></span>
             <small class="m-extra">força —</small>
           </div>
           <div class="m-cartao" id="mMov">
             <span class="m-rotulo">Movimento</span>
-            <span class="m-valor"><svg class="ic"><use href="#i-onda"/></svg><b>—</b></span>
-            <span class="medidor" data-n="0"><i></i><i></i><i></i></span>
+            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-onda"/></svg><b>—</b></span>
+            <span class="medidor" data-n="0" aria-hidden="true"><i></i><i></i><i></i></span>
             <small class="m-extra">&nbsp;</small>
           </div>
           <div class="m-cartao" id="mVela">
             <span class="m-rotulo">Vela atual</span>
-            <span class="m-valor"><svg class="ic"><use href="#i-vela"/></svg><b>—</b></span>
+            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-vela"/></svg><b>—</b></span>
             <small class="m-extra">&nbsp;</small>
           </div>
         </div>
         <h3 class="m-titulo">O que está acontecendo</h3>
         <p class="m-frase" id="mFrase">—</p>
         <details class="detalhes">
-          <summary>Ver detalhes técnicos</summary>
-          <dl class="tecnico" id="mTecnico"></dl>
+          <summary>Ver os números por trás (resumo técnico)</summary>
+          <div class="tecnico" id="mTecnico"></div>
           <p class="sub" id="mCriterio"></p>
           <h3 class="m-titulo">Todos os ativos varridos</h3>
           <div class="tabela-rolagem"><table class="tabela" id="topTodos"></table></div>
         </details>
       </section>
 
-      <section class="cartao sessao-hist" id="cartaoSessao">
-        <header class="cartao-topo"><h2>Operações desta sessão</h2><small id="placar"></small></header>
+      <section class="cartao sessao-hist so-detalhado" id="cartaoSessao" aria-labelledby="tSessao">
+        <header class="cartao-topo"><h2 id="tSessao">Operações desta sessão</h2><small id="placar"></small></header>
         <ol class="bolinhas" id="bolinhas"><li class="vazio-txt">Nenhuma operação ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado.</li></ol>
-        <p class="sub"><span class="bolinha mini principal"></span> contorno = sinal do veredito (ENTRAR AGORA). Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
+        <p class="sub"><span class="bolinha mini principal" aria-hidden="true"></span> contorno = entrada avisada pelo Farol (ENTRAR AGORA). Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
       </section>
     </div>
+
+    <aside class="col-lateral">
+      <section class="cartao top" id="cartaoTop" data-tour="top" aria-labelledby="tTop">
+        <header class="cartao-topo">
+          <h2 id="tTop">Top 3 ativos agora <button type="button" class="q" id="qTop" aria-label="Como a nota é calculada" data-dica="">?</button></h2>
+          <small id="topInfo"></small>
+        </header>
+        <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
+      </section>
+
+      <section class="cartao ranking so-detalhado" id="cartaoRanking" aria-labelledby="tRanking">
+        <header class="cartao-topo">
+          <div>
+            <h2 id="tRanking">Estratégias: quem está acertando</h2>
+            <p class="sub" id="rkSub"></p>
+          </div>
+        </header>
+        <div class="rk-escala" aria-hidden="true"><i class="rk-esc-faixa"></i>margem de erro <i class="rk-esc-ponto"></i>estimativa <i class="rk-esc-be"></i>mínimo p/ lucrar</div>
+        <div id="rkGrupos"><p class="vazio-txt">Conecte para calcular.</p></div>
+        <details class="detalhes">
+          <summary>Ver números completos e escolher estratégias</summary>
+          <p class="sub" id="rkCriterio"></p>
+          <div class="tabela-rolagem"><table class="tabela" id="rkTabela"></table></div>
+          <p class="sub">Desmarcar uma estratégia tira ela do veredito, da liderança e do cálculo de conflito. Com 11 estratégias testadas, uma pode passar no critério por sorte; confirme com <code>python validar.py</code>.</p>
+        </details>
+      </section>
+    </aside>
   </div>
 </main>
 
 <footer class="rodape-risco" role="note">
-  <svg class="ic"><use href="#i-alerta"/></svg>
+  <svg class="ic" aria-hidden="true"><use href="#i-alerta"/></svg>
   <span><b>Ferramenta de estudo.</b> Nenhum sinal é garantia. Opções binárias podem causar perda total do valor investido.</span>
 </footer>
 
 <!-- ============================================================ diálogos -->
 <dialog class="dialogo" id="dlgAtivo" aria-labelledby="dlgAtivoTitulo">
   <form method="dialog" class="dlg-corpo" id="formAtivo">
-    <header><h2 id="dlgAtivoTitulo">Escolher ativo</h2><button class="botao botao-icone" value="cancelar" aria-label="Fechar"><svg class="ic"><use href="#i-fechar"/></svg></button></header>
+    <header><h2 id="dlgAtivoTitulo">Escolher ativo</h2><button class="botao botao-icone" value="cancelar" aria-label="Fechar"><svg class="ic" aria-hidden="true"><use href="#i-fechar"/></svg></button></header>
     <label class="campo"><span>Mercado</span><select id="selMercado"><option>Carregando...</option></select></label>
     <label class="campo"><span>Ativo</span><select id="selAtivo"></select></label>
     <div class="campos-linha">
       <label class="campo"><span>Tempo de cada vela</span><select id="selTf"></select></label>
-      <label class="campo" id="campoTfCustom" hidden><span>Personalizado</span><input id="inpTfCustom" type="text" placeholder="M7"></label>
+      <label class="campo" id="campoTfCustom" hidden><span>Personalizado</span><input id="inpTfCustom" type="text" placeholder="M7" maxlength="5"></label>
     </div>
     <div class="campos-linha">
-      <label class="campo"><span>Expiração (velas) <button type="button" class="q" data-dica="Quantas velas a operação dura. 1 = termina no fechamento da vela de entrada.">?</button></span><input id="inpExp" type="number" min="1" value="1"></label>
-      <label class="campo"><span>Payout da corretora (%) <button type="button" class="q" data-dica="Quanto a corretora paga quando você acerta. Define o mínimo de acerto para lucrar (break-even): com 85%, é preciso acertar mais de 54,1%.">?</button></span><input id="inpPayout" type="number" min="1" max="500" value="85"></label>
+      <label class="campo"><span>Expiração (velas) <button type="button" class="q" aria-label="O que é expiração" data-dica="Quantas velas a operação dura. 1 = termina no fechamento da vela de entrada.">?</button></span><input id="inpExp" type="number" min="1" max="60" value="1"></label>
+      <label class="campo"><span>Payout da corretora (%) <button type="button" class="q" aria-label="O que é payout" data-dica="Quanto a corretora paga quando você acerta. Define o mínimo de acerto para lucrar (break-even): com 85%, é preciso acertar mais de 54,1%.">?</button></span><input id="inpPayout" type="number" min="1" max="500" value="85"></label>
     </div>
     <p class="sub" id="beInfo"></p>
     <footer><button class="botao" value="cancelar">Cancelar</button><button class="botao botao-marca" value="conectar" id="btnDlgConectar">Conectar</button></footer>
@@ -249,21 +287,25 @@
 
 <dialog class="dialogo" id="dlgAlertas" aria-labelledby="dlgAlertasTitulo">
   <form method="dialog" class="dlg-corpo">
-    <header><h2 id="dlgAlertasTitulo">Sons e alertas</h2><button class="botao botao-icone" value="fechar" aria-label="Fechar"><svg class="ic"><use href="#i-fechar"/></svg></button></header>
+    <header><h2 id="dlgAlertasTitulo">Alertas e avisos</h2><button class="botao botao-icone" value="fechar" aria-label="Fechar"><svg class="ic" aria-hidden="true"><use href="#i-fechar"/></svg></button></header>
+    <p class="sub">Só a <b>estratégia líder</b> (a mais validada do ranking) avisa, em 3 momentos: <b>se formando</b>, <b>entrar agora</b> e <b>resultado</b>. Sem vantagem comprovada, o Farol fica em silêncio.</p>
     <label class="interruptor grande"><input type="checkbox" id="chkSom"><span>Som ligado</span></label>
     <label class="campo"><span>Volume <output id="volTxt"></output></span><input type="range" id="inpVolume" min="0" max="100" step="5"></label>
+    <label class="campo"><span>Avisar “se formando” a partir de <output id="limiteTxt"></output> <button type="button" class="q" id="qLimite" aria-label="O que é o progresso de formação" data-dica="">?</button></span><input type="range" id="inpLimite" min="50" max="100" step="5"></label>
+    <label class="interruptor"><input type="checkbox" id="chkAvisarObs"><span>Avisar também candidatas não comprovadas (só observação)</span></label>
+    <p class="sub">Desligado por padrão. Só vale com o modo <b>Observação</b> ligado; usa outro som e o título “OBSERVAÇÃO, sem vantagem comprovada”. Não é recomendação.</p>
     <div class="campos-linha">
       <button type="button" class="botao" id="btnNotif">Permitir notificações</button>
       <button type="button" class="botao botao-marca" id="btnTestar">Testar alertas</button>
     </div>
-    <p class="sub">O teste toca o som de <b>preparo</b> (suave), o som de <b>entrada</b> e envia uma notificação do navegador. Notificações reais só aparecem quando a aba está em segundo plano. O modo observação nunca toca som de entrada.</p>
+    <p class="sub">O teste mostra os 3 tipos com os textos reais: <b>se formando</b> (som suave), <b>entrar agora</b> (compra sobe o tom, venda desce) e <b>resultado</b>. Notificações reais aparecem quando a aba está em segundo plano.</p>
   </form>
 </dialog>
 
 <div class="tour" id="tour" hidden>
   <div class="tour-foco" id="tourFoco"></div>
   <div class="tour-cartao" id="tourCartao" role="dialog" aria-modal="true" aria-labelledby="tourTitulo">
-    <div class="tour-marca"><img src="/static/marca/simbolo-compacto.svg" alt="" width="28" height="28"><small id="tourPasso"></small></div>
+    <div class="tour-marca"><img src="/static/marca/simbolo-compacto.svg" alt="" width="30" height="30"><small id="tourPasso"></small></div>
     <h2 id="tourTitulo"></h2>
     <p id="tourTexto"></p>
     <footer><button class="botao" id="tourPular">Pular</button><span class="espaco"></span><button class="botao" id="tourVoltar">Voltar</button><button class="botao botao-marca" id="tourProximo">Próximo</button></footer>

@@ -12,7 +12,9 @@ MAX_RESPOSTA = 900
 
 
 def preco(simbolo: str, epoch: int) -> float:
-    return 100 + math.sin(epoch / 3000 + len(simbolo)) * 2 + (epoch % 7) * 0.01
+    """Série própria por ativo (fase e ritmo dependem do nome inteiro, não só do tamanho)."""
+    k = sum(map(ord, simbolo))
+    return 100 + math.sin(epoch / (2000 + 37 * (k % 50)) + k) * 2 + ((epoch + k) % 7) * 0.01
 
 
 class FakeDeriv:
