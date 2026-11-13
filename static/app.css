@@ -220,7 +220,25 @@ body.modo-simples .so-detalhado { display: none !important; }
 /* estados do veredito */
 .veredito.INICIO .anel, .veredito.CARREGANDO .anel { opacity: .35; }
 .veredito.CARREGANDO .v-icone svg { animation: girar 1.6s linear infinite; }
-.veredito:not(.INICIO) #vAcao { display: none; }
+.veredito:not(.INICIO):not(.ERRO) #vAcao { display: none; }
+#vAcao[hidden] { display: none; }
+.veredito.ERRO .v-icone { color: var(--conf); }
+.veredito.ERRO .anel { opacity: .35; }
+
+/* carregamento: etapas + barra + esqueleto (nunca uma tela vazia parada) */
+.v-carga { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid var(--linha); }
+.v-carga-etapas { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; font-size: var(--fs-pequeno); }
+.v-carga-etapas li { padding: 3px 10px; border-radius: 999px; background: var(--superficie-3); color: var(--texto-3); }
+.v-carga-etapas li.atual { background: var(--marca-suave); color: var(--marca-clara); font-weight: 600; }
+.v-carga-etapas li.feita { color: var(--texto-2); }
+.v-carga-etapas li.feita::before { content: "✓ "; }
+.barra-carga { position: relative; height: 8px; border-radius: 999px; background: var(--superficie-3); overflow: hidden; }
+.barra-carga i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--marca); transition: width var(--medio) var(--curva); }
+.v-carga-txt { margin: 0; color: var(--texto-2); font-size: var(--fs-pequeno); }
+.esqueleto { display: grid; gap: 8px; }
+.esqueleto i { display: block; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--superficie-2), var(--superficie-3), var(--superficie-2)); background-size: 200% 100%; animation: brilhar 1.4s linear infinite; }
+.esqueleto i:nth-child(1) { width: 72%; } .esqueleto i:nth-child(2) { width: 54%; } .esqueleto i:nth-child(3) { width: 63%; }
+@keyframes brilhar { to { background-position: -200% 0; } }
 .veredito.PREPARANDO { --cor: var(--prep); --cor-suave: var(--prep-suave); border-color: color-mix(in srgb, var(--prep) 50%, transparent); }
 .veredito.PREPARANDO .v-titulo { color: var(--prep); }
 .veredito.ENTRAR.CALL { --cor: var(--alta); --cor-suave: rgba(47,216,138,.22); --brilho: rgba(47,216,138,.35); border-color: var(--alta); }
@@ -396,7 +414,23 @@ details.rk-grupo[open] > summary::before { transform: rotate(90deg); }
 .tecnico .valor { font: 600 var(--fs-destaque)/1.3 var(--fonte-titulo); color: var(--texto); margin: 0 0 4px; }
 .tecnico p { margin: 0; font-size: var(--fs-pequeno); color: var(--texto-2); line-height: 1.5; }
 
-/* ------------------------------------------------------------------ bolinhas da sessão */
+/* ------------------------------------------------------------------ operações da sessão (filtradas) */
+.abas-ops button { font-size: var(--fs-pequeno); }
+.placar { margin: 0 0 8px; color: var(--texto-2); font-size: var(--fs-pequeno); }
+.lista-ops { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; }
+.op { display: grid; grid-template-columns: auto minmax(0, 8.5em) minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 10px; background: var(--superficie-2); font-size: var(--fs-pequeno); animation: aparecer var(--medio) var(--curva); }
+.op.principal { box-shadow: inset 0 0 0 1.5px var(--marca); }
+.op-hora { color: var(--texto-3); }
+.op-ctx { color: var(--texto-2); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-dir.CALL { color: var(--alta); } .op-dir.PUT { color: var(--baixa); }
+.op-res { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-weight: 700; background: var(--superficie-3); color: var(--texto-2); }
+.op-res .ic { width: 13px; height: 13px; }
+.op-res.WIN { background: var(--alta); color: var(--alta-texto); }
+.op-res.LOSS { background: var(--baixa); color: var(--baixa-texto); }
+.op-res.pend { animation: respirar 1.6s ease-in-out infinite; }
+@media (max-width: 560px) { .op { grid-template-columns: auto minmax(0, 1fr) auto; } .op-nome, .op-dir { grid-column: 2 / -1; } }
+/* ------------------------------------------------------------------ bolinhas (legado) */
 .bolinhas { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .bolinha { position: relative; display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--superficie-3); color: var(--texto-2); animation: aparecer var(--medio) var(--curva); font-weight: 700; }
 .bolinha .ic { width: 15px; height: 15px; }

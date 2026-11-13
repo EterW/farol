@@ -37,6 +37,10 @@ PROGRESSO_LIMITE_MIN, PROGRESSO_LIMITE_MAX = 50, 100
 PROGRESSO_PESO_CONDICOES = 0.6  # peso das condições cumpridas; o resto é a proximidade do gatilho
 PROGRESSO_DIST_MAX_ATR = 1.0  # a 1 ATR (ou mais) do gatilho a proximidade vale 0
 PROGRESSO_PASSO_ATR = 0.05  # resolução da busca da distância até o gatilho
+# "Se formando" só vale para estratégias de sinal raro: com sinal em mais de 30% das velas da janela
+# (Seguir cor dá sinal em ~97%), "formando 100%" seria verdade quase sempre e não informaria nada.
+# Medido em EUR/USD M5, AUD/USD M5 e R_100 M1: só Seguir cor passa do limite (Reversão ~23-25%).
+TAXA_MAX_PREPARO = 0.30
 
 # --------------------------------------------------------------------------- modo ao vivo
 N_HISTORICO = 3000  # velas do timeframe carregadas por ativo ("histórico completo" ao vivo)
@@ -57,6 +61,8 @@ ATIVOS_SCANNER = [
 JANELA_ENTRADA_MIN, JANELA_ENTRADA_MAX = 10.0, 60.0  # s que o ENTRAR AGORA / CONFLITO fica na tela...
 JANELA_ENTRADA_FRACAO = 0.25  # ...= 25% da vela, dentro desses limites
 CICLO_SESSAO = 0.25  # s entre verificações de vela nova na sessão
+TEMPO_LIMITE_CARGA = 30.0  # s: sem velas nesse tempo, a tela mostra o erro e o botão "Tentar de novo"
+CACHE_RANKING_MAX = 24  # rankings guardados por ativo + tempo gráfico + última vela (voltar é instantâneo)
 ATRASO_MAX_VELAS = 3  # sem vela nova há mais de N velas (+5 s) = ativo considerado parado no scanner
 
 # --------------------------------------------------------------------------- conexão com a Deriv

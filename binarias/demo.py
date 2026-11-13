@@ -244,6 +244,7 @@ def mensagens(cenario: str, agora: float | None = None) -> list[dict]:
                 "registrado": True,
                 "principal": est_id == ID["TEND"] and comprovada,
                 "ativo": "frxEURUSD",
+                "timeframe": "M5",
             }
         )
         ops.append({"tipo": "resultado", "op": n, "id": est_id, "resultado": res, "entrada": 1.0851, "saida": 1.0853})

@@ -1,6 +1,10 @@
 """Sessão ao vivo (uma por aba do navegador). Usa o DerivHub compartilhado e exatamente o mesmo
 código do backtest: estrategias.gerar_sinais, backtest.executar/resolver (via ranking) e
-timeframes.agregar. A estratégia líder (com histerese) e os avisos vêm de binarias/avisos.py."""
+timeframes.agregar. A estratégia líder (com histerese) e os avisos vêm de binarias/avisos.py.
+
+Troca de ativo/tempo gráfico: cada pedido "assinar" traz um ID de sessão (`sid`). A sessão para TUDO o
+que era do contexto anterior (tarefas, séries, operações em aberto, líder, avisos) e toda mensagem
+enviada leva o `sid` do contexto em que foi gerada: o navegador descarta as que não forem do atual."""
 
 import asyncio
 import contextlib
@@ -8,6 +12,7 @@ import csv
 import json
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -18,6 +23,7 @@ from .backtest import ConfigBacktest, resolver
 from .config import (
     ATIVOS_SCANNER,
     ATRASO_MAX_VELAS,
+    CACHE_RANKING_MAX,
     CICLO_SESSAO,
     EMPATE_PADRAO,
     FOLGA_FECHAMENTO,
@@ -33,6 +39,7 @@ from .config import (
     PROGRESSO_LIMITE,
     PROGRESSO_LIMITE_MAX,
     PROGRESSO_LIMITE_MIN,
+    TEMPO_LIMITE_CARGA,
 )
 from .estrategias import ESTRATEGIAS, POR_ID
 from .hub import DerivHub, SerieVelas
@@ -59,6 +66,21 @@ COLUNAS_CSV = [
 
 
 NOMES = {e.id: e.nome for e in ESTRATEGIAS}
+
+# ranking por (ativo, tempo gráfico, última vela, expiração, payout, empate, marcadas): voltar a um ativo
+# na mesma vela não recalcula nada. É o mesmo resultado (mesmas velas = mesmo cálculo).
+_CACHE_RANKING: "OrderedDict[tuple, dict]" = OrderedDict()
+
+
+def _ranking_em_cache(chave: tuple, calcular) -> dict:
+    if chave in _CACHE_RANKING:
+        _CACHE_RANKING.move_to_end(chave)
+        return _CACHE_RANKING[chave]
+    r = calcular()
+    _CACHE_RANKING[chave] = r
+    while len(_CACHE_RANKING) > CACHE_RANKING_MAX:
+        _CACHE_RANKING.popitem(last=False)
+    return r
 
 
 class NavegadorFechado(Exception):
@@ -105,7 +127,9 @@ class Sessao:
         self.nav = navegador
         self.hub = hub
         self.tarefas: list[asyncio.Task] = []
-        self.series: list[SerieVelas] = []
+        self.series: list[tuple[SerieVelas, bool]] = []  # (série, é o ativo principal?)
+        self.sid: str | None = None  # ID do contexto atual (ativo + tempo gráfico) pedido pelo navegador
+        self.principal_pronto = asyncio.Event()
         self.ativas: set[str] = set(POR_ID)
         self.observacao = False  # modo observação (só muda o que a tela mostra, nunca o ENTRAR)
         self.seletor = SeletorLider()
@@ -124,9 +148,10 @@ class Sessao:
         """Envia uma mensagem JSON ao navegador (NaN viram null)."""
         if self.fechado:
             raise NavegadorFechado()
+        texto = json.dumps(_limpar({"tipo": tipo, "sid": self.sid, **conteudo}), default=str)  # sid de AGORA
         try:
             async with self._lock_envio:
-                await self.nav.send_text(json.dumps(_limpar({"tipo": tipo, **conteudo}), default=str))
+                await self.nav.send_text(texto)
         except Exception as e:
             self.fechado = True
             raise NavegadorFechado() from e
@@ -134,6 +159,12 @@ class Sessao:
     async def status(self, texto: str, nivel: str = "info") -> None:
         """Mensagem de status para a tela."""
         await self.enviar("status", texto=texto, nivel=nivel)
+
+    async def carga(self, etapa: str, texto: str, feito: int | None = None, total: int | None = None) -> None:
+        """Progresso do carregamento (etapa "velas", "estrategias" ou "erro") para a tela."""
+        await self.enviar(
+            "carga", etapa=etapa, texto=texto, feito=feito, total=total, simbolo=self.simbolo, timeframe=self.tf
+        )
 
     async def avisar(self, lista: list[dict]) -> None:
         """Envia os avisos (som/notificação) decididos pelo motor."""
@@ -180,9 +211,13 @@ class Sessao:
         }
 
     # ------------------------------------------------------------------ controle
-    async def iniciar(self, simbolo: str, timeframe: str, expiracao: int, payout: float) -> None:
-        """Começa a acompanhar um ativo/timeframe (para a sessão anterior antes)."""
+    async def iniciar(self, simbolo: str, timeframe: str, expiracao: int, payout: float, sid: str | None = None) -> None:
+        """Começa a acompanhar um ativo/timeframe. Antes, descarta TODO o estado do contexto anterior."""
         await self.parar()
+        self.sid = sid
+        self.principal_pronto = asyncio.Event()
+        self.analise = None
+        self.operacoes = {}
         try:
             seg = parse_timeframe(timeframe)
             self.cfg = ConfigBacktest(expiracao=max(1, int(expiracao)), payout=float(payout), empate=EMPATE_PADRAO)
@@ -219,8 +254,8 @@ class Sessao:
             with contextlib.suppress(asyncio.CancelledError, NavegadorFechado):
                 await t  # as demais exceções já foram tratadas em _proteger
         self.tarefas = []
-        for s in self.series:
-            self.hub.liberar(s)
+        for s, principal in self.series:
+            self.hub.liberar(s, prioridade=principal)
         self.series = []
         for op in self.operacoes.values():  # operações sem resultado ficam registradas
             self._registrar(op, None, None, "CANCELADO")
@@ -236,9 +271,9 @@ class Sessao:
             with contextlib.suppress(NavegadorFechado):
                 await self.status(f"Erro interno ({nome}): {e}. Detalhes em resultados/erros.log", "erro")
 
-    async def _obter(self, simbolo: str) -> SerieVelas:
-        s = await self.hub.obter_serie(simbolo, self.gran, self.n_base)
-        self.series.append(s)
+    async def _obter(self, simbolo: str, principal: bool = False) -> SerieVelas:
+        s = await self.hub.obter_serie(simbolo, self.gran, self.n_base, prioridade=principal)
+        self.series.append((s, principal))
         return s
 
     # ------------------------------------------------------------------ velas
@@ -262,20 +297,49 @@ class Sessao:
             await asyncio.sleep(1)
 
     # ------------------------------------------------------------------ ativo principal
+    async def _esperar_velas(self, s: SerieVelas) -> bool:
+        """Espera o histórico do ativo principal, mandando o progresso. False = desistiu (tempo limite)."""
+        alvo = s.n_base
+        limite = time.monotonic() + TEMPO_LIMITE_CARGA
+        ultimo = None
+        while not s.pronta.is_set():
+            if time.monotonic() > limite:
+                return False
+            feito = min(s.baixadas, alvo) // max(1, self.fator)
+            if feito != ultimo:
+                ultimo = feito
+                await self.carga("velas", f"Carregando velas de {self.ativo} {self.tf}…", feito, N_HISTORICO)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(s.pronta.wait(), 0.25)
+        return True
+
     async def _rodar(self) -> None:
-        await self.status(f"Carregando {N_HISTORICO} velas de {self.simbolo} {self.tf}...")
-        s = await self._obter(self.simbolo)
-        await s.pronta.wait()
+        try:
+            await self._rodar_principal()
+        finally:
+            self.principal_pronto.set()  # o scanner começa mesmo se o principal falhar
+
+    async def _rodar_principal(self) -> None:
+        await self.carga("velas", f"Carregando velas de {self.ativo} {self.tf}…", 0, N_HISTORICO)
+        s = await self._obter(self.simbolo, principal=True)
+        if not await self._esperar_velas(s):
+            await self.carga(
+                "erro",
+                f"A Deriv não entregou as velas de {self.ativo} {self.tf} em {TEMPO_LIMITE_CARGA:.0f} s. "
+                "Verifique a internet e toque em “Tentar de novo”.",
+            )
+            return
         if not s.velas:
-            await self.status(f"Deriv: {s.erro or 'nenhuma vela retornada'} ({self.simbolo})", "erro")
+            await self.carga("erro", f"A Deriv não devolveu velas de {self.ativo} {self.tf}: {s.erro or 'sem dados'}.")
             return
         self.serie = s
         self.df, formando = self._velas(s)
         if len(self.df) < 2:
-            await self.status("Histórico insuficiente para este ativo/timeframe.", "erro")
+            await self.carga("erro", f"Histórico insuficiente para {self.ativo} {self.tf}.")
             return
         self.ultima_fechada = int(self.df["epoch"].iat[-1])
         await self._inicializar(formando)
+        self.principal_pronto.set()
         if s.mercado_fechado:
             await self.status(f"Mercado fechado: mostrando só o histórico de {self.simbolo} {self.tf}.", "aviso")
         else:
@@ -304,17 +368,41 @@ class Sessao:
                 ultimo_estado = time.time()
                 await self._enviar_estado(formando)
 
-    def _calcular(self, df: pd.DataFrame, formando: pd.DataFrame, ativas: set) -> tuple[dict, dict]:
-        r = calcular_ranking(df, self.cfg, JANELA_RANKING, MIN_OPERACOES, elegiveis=ativas)
+    def _calcular(self, df: pd.DataFrame, formando: pd.DataFrame, ativas: set, ao_progresso=None) -> tuple[dict, dict]:
+        cfg = self.cfg
+        chave = (self.simbolo, self.tf, int(df["epoch"].iat[-1]), len(df), cfg.expiracao, cfg.payout, cfg.empate)
+        chave += (frozenset(ativas),)
+        r = _ranking_em_cache(
+            chave,
+            lambda: calcular_ranking(
+                df, cfg, JANELA_RANKING, MIN_OPERACOES, elegiveis=ativas, ao_progresso=ao_progresso
+            ),
+        )
         a = mercado.analisar(df, formando, nome=f"{self.simbolo.removeprefix('frx')} {self.tf}")
         return r, a
 
+    async def _calcular_com_progresso(self, df: pd.DataFrame, formando: pd.DataFrame, ativas: set):
+        """Ranking em segundo plano (thread), mandando "calculando estratégias k de 11" para a tela."""
+        loop = asyncio.get_running_loop()
+        fila: asyncio.Queue = asyncio.Queue()
+
+        def ao_progresso(feitas: int, total: int, nome: str) -> None:
+            loop.call_soon_threadsafe(fila.put_nowait, (feitas, total, nome))
+
+        tarefa = asyncio.ensure_future(asyncio.to_thread(self._calcular, df, formando, ativas, ao_progresso))
+        try:
+            while not tarefa.done():
+                with contextlib.suppress(asyncio.TimeoutError):
+                    feitas, total, nome = await asyncio.wait_for(fila.get(), 0.2)
+                    if feitas < total:
+                        texto = f"Calculando estratégias {feitas + 1} de {total} ({nome})…"
+                        await self.carga("estrategias", texto, feitas, total)
+            return await tarefa
+        finally:
+            tarefa.cancel()  # se a sessão trocar de ativo, o resultado atrasado é descartado
+
     async def _inicializar(self, formando: pd.DataFrame) -> None:
         df = self.df
-        ranking, analise = await asyncio.to_thread(self._calcular, df, formando, set(self.ativas))
-        self.seletor.atualizar(ranking, self.ativas)
-        ranking = self._com_lider(ranking)
-        self.ranking, self.analise = ranking, analise
         # setas do histórico (só a parte que aparece no gráfico)
         grafico = df.tail(N_VELAS_GRAFICO)
         inicio = int(grafico["epoch"].iat[0])
@@ -343,6 +431,11 @@ class Sessao:
             sinais=marcas,
             n_velas=len(df),
         )
+        # as velas já estão na tela; agora o ranking (em thread, com progresso)
+        ranking, analise = await self._calcular_com_progresso(df, formando, set(self.ativas))
+        self.seletor.atualizar(ranking, self.ativas)
+        ranking = self._com_lider(ranking)
+        self.ranking, self.analise = ranking, analise
         await self._enviar_analise(ranking, analise)
         dec = sinal.decidir(ranking, {}, {}, self.ativas, lider=self.seletor.atual)
         await self.enviar("decisao", **dec, novo=False, t=self.ultima_fechada, veredito=self._veredito(dec, {}))
@@ -379,6 +472,8 @@ class Sessao:
                     entrada=entrada,
                     saida=saida,
                     principal=bool(op.get("principal")),
+                    ativo=self.simbolo,
+                    timeframe=self.tf,
                 )
                 await self.avisar(self.motor.resultado(op, res, self.ativo))
 
@@ -428,6 +523,7 @@ class Sessao:
                 registrado=registrado,
                 principal=principal,
                 ativo=self.simbolo,
+                timeframe=self.tf,
             )
 
         # 4) decisão principal (fica fixa por alguns segundos se for ENTRAR/CONFLITO)
@@ -564,6 +660,9 @@ class Sessao:
         return [scanner.avaliar_ativo(sim, df, cfg, aberto) for sim, (df, aberto) in retrato.items()]
 
     async def _rodar_scanner(self) -> None:
+        # o ativo que a pessoa está olhando carrega primeiro; o Top 3 vem depois
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self.principal_pronto.wait(), TEMPO_LIMITE_CARGA)
         simbolos = list(dict.fromkeys(ATIVOS_SCANNER))
         series = {sim: await self._obter(sim) for sim in simbolos}
         try:

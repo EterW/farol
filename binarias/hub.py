@@ -6,10 +6,13 @@
 * A Deriv derruba a conexão pública a cada ~2 min: o hub reconecta na hora, reassina tudo e
   preenche o buraco de velas do período desconectado.
 * Backoff exponencial em quedas repetidas e em RateLimit.
+* Fila de envio com PRIORIDADE: o ativo que a pessoa está olhando passa na frente do scanner, e um
+  download que ninguém mais usa (troca rápida de ativo/tempo gráfico) é cancelado na hora.
 """
 
 import asyncio
 import contextlib
+import heapq
 import json
 import time
 from typing import Any
@@ -48,6 +51,13 @@ class SerieVelas:
         self.lock = asyncio.Lock()
         self.carregando: asyncio.Task | None = None
         self.liberacao: asyncio.TimerHandle | None = None
+        self.refs_prioridade = 0  # consumidores que estão OLHANDO este ativo (passam na frente na fila)
+        self.baixadas = 0  # progresso do download inicial (para a tela de carregamento)
+
+    @property
+    def prioridade(self) -> bool:
+        """Alguém está olhando este ativo agora (não só o scanner)."""
+        return self.refs_prioridade > 0
 
     def mesclar(self, velas) -> None:
         """Acrescenta/atualiza velas, descartando artefatos desalinhados e o excesso antigo."""
@@ -92,7 +102,9 @@ class DerivHub:
             "desde": time.time(),
             "quedas": 0,
         }
-        self._lock_envio = asyncio.Lock()
+        self._ocupado = False  # vez de enviar (fila com prioridade, ver _vez/_liberar_vez)
+        self._fila: list[tuple[int, int, asyncio.Future]] = []
+        self._seq_fila = 0
         self._ultimo_envio = 0.0
         self._tarefas: list[asyncio.Task] = []
         self._ativos: dict[str, Any] = {"t": 0.0, "lista": [], "abertos": {}}
@@ -200,8 +212,33 @@ class DerivHub:
             log.warning("Mensagem ohlc inesperada: %s", str(o)[:200])
 
     # ------------------------------------------------------------------ requisições
-    async def _pedir_uma(self, payload: dict, timeout: float) -> dict:
-        async with self._lock_envio:
+    async def _vez(self, prioridade: bool) -> None:
+        """Espera a vez de enviar. Pedidos com prioridade passam na frente dos demais (ordem de chegada
+        dentro de cada nível)."""
+        if not self._ocupado and not self._fila:
+            self._ocupado = True
+            return
+        fut = asyncio.get_running_loop().create_future()
+        self._seq_fila += 1
+        heapq.heappush(self._fila, (0 if prioridade else 1, self._seq_fila, fut))
+        try:
+            await fut
+        except asyncio.CancelledError:
+            if fut.done() and not fut.cancelled():
+                self._liberar_vez()  # recebeu a vez e foi cancelado logo em seguida: passa adiante
+            raise
+
+    def _liberar_vez(self) -> None:
+        while self._fila:
+            _, _, fut = heapq.heappop(self._fila)
+            if not fut.done():
+                fut.set_result(None)
+                return
+        self._ocupado = False
+
+    async def _pedir_uma(self, payload: dict, timeout: float, prioridade: bool = False) -> dict:
+        await self._vez(prioridade)
+        try:
             espera = self._ultimo_envio + self.intervalo - time.monotonic()
             if espera > 0:
                 await asyncio.sleep(espera)
@@ -218,12 +255,21 @@ class DerivHub:
             except websockets.ConnectionClosed:
                 self._pend.pop(rid, None)
                 raise ConexaoPerdida() from None
+        finally:
+            self._liberar_vez()
         try:
             return await asyncio.wait_for(fut, timeout)
         finally:
             self._pend.pop(rid, None)
 
-    async def pedir(self, payload: dict, tentativas: int = 6, timeout: float = 30.0, reconectar: bool = True) -> dict:
+    async def pedir(
+        self,
+        payload: dict,
+        tentativas: int = 6,
+        timeout: float = 30.0,
+        reconectar: bool = True,
+        prioridade: bool = False,
+    ) -> dict:
         """Envia e espera a resposta. Repete em queda de conexão (se `reconectar`) e em RateLimit."""
         ultimo = None
         for t in range(tentativas):
@@ -233,7 +279,7 @@ class DerivHub:
                 except asyncio.TimeoutError:
                     raise DerivErro("Sem conexão com a Deriv", "SemConexao") from None
             try:
-                resp = await self._pedir_uma(payload, timeout)
+                resp = await self._pedir_uma(payload, timeout, prioridade)
             except (ConexaoPerdida, asyncio.TimeoutError) as e:
                 if not reconectar:
                     raise ConexaoPerdida() from e
@@ -258,12 +304,16 @@ class DerivHub:
             self.offset = float(r["time"]) - (t0 + time.time()) / 2
 
     # ------------------------------------------------------------------ séries
-    async def obter_serie(self, simbolo: str, gran: int, n_base: int) -> SerieVelas:
-        """Série compartilhada do ativo; cria e carrega na primeira vez."""
+    async def obter_serie(self, simbolo: str, gran: int, n_base: int, prioridade: bool = False) -> SerieVelas:
+        """Série compartilhada do ativo; cria e carrega na primeira vez. `prioridade`: é o ativo que a
+        pessoa está olhando (os pedidos dele passam na frente dos do scanner)."""
         chave = (simbolo, gran)
         s = self.series.get(chave)
+        if s is not None and prioridade:
+            s.refs_prioridade += 1
         if s is None:
             s = SerieVelas(simbolo, gran, n_base)
+            s.refs_prioridade = int(prioridade)
             self.series[chave] = s
             s.carregando = asyncio.create_task(self._carregar(s))
         elif n_base > s.n_base:
@@ -274,9 +324,16 @@ class DerivHub:
             s.liberacao = None
         return s
 
-    def liberar(self, s: SerieVelas) -> None:
-        """Um consumidor a menos; sem consumidores, a assinatura é cancelada depois de um tempo."""
+    def liberar(self, s: SerieVelas, prioridade: bool = False) -> None:
+        """Um consumidor a menos; sem consumidores, a assinatura é cancelada depois de um tempo (fica em
+        cache para quem voltar ao mesmo ativo). Um download AINDA em andamento é cancelado na hora: numa
+        troca rápida de ativo/tempo gráfico ele só atrasaria o ativo novo."""
         s.refs -= 1
+        if prioridade:
+            s.refs_prioridade = max(0, s.refs_prioridade - 1)
+        if s.refs <= 0 and s.carregando is not None and not s.carregando.done():
+            asyncio.get_running_loop().create_task(self._remover(s))
+            return
         if s.refs <= 0 and s.liberacao is None:
             s.liberacao = asyncio.get_running_loop().call_later(
                 ESPERA_LIBERAR, lambda: asyncio.create_task(self._remover(s))
@@ -297,7 +354,19 @@ class DerivHub:
     async def _carregar(self, s: SerieVelas) -> None:
         try:
             await asyncio.wait_for(self.conectado.wait(), timeout=120)
-            velas = await baixar_historico(self.pedir, s.simbolo, s.gran, s.n_base, self.agora())
+
+            def ao_progresso(feitas: int, _total: int) -> None:
+                s.baixadas = feitas
+
+            velas = await baixar_historico(
+                lambda p: self.pedir(p, prioridade=s.prioridade),  # lido a cada página: muda se alguém passar a olhar
+                s.simbolo,
+                s.gran,
+                s.n_base,
+                self.agora(),
+                ao_progresso,
+            )
+            s.baixadas = len(velas)
             s.mesclar(velas)
             await self._assinar(s)
             s.erro = None
@@ -324,7 +393,7 @@ class DerivHub:
                 if faltam > MAX_CONTAGEM_ASSINATURA // 2:
                     # buraco grande (queda longa ou mercado que abriu): pagina o histórico até a última vela
                     velas = await baixar_historico(
-                        lambda p: self.pedir(p, reconectar=reconectar),
+                        lambda p: self.pedir(p, reconectar=reconectar, prioridade=s.prioridade),
                         s.simbolo,
                         s.gran,
                         min(faltam, s.n_base),
@@ -344,6 +413,7 @@ class DerivHub:
                         "subscribe": 1,
                     },
                     reconectar=reconectar,
+                    prioridade=s.prioridade,
                 )
             except DerivErro as e:
                 if e.codigo == "MarketIsClosed":

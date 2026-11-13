@@ -42,6 +42,7 @@ log = obter("servidor")
 hub = DerivHub()
 
 SIMBOLO_VALIDO = re.compile(r"^[A-Za-z0-9_]{1,40}$")
+SID_VALIDO = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
 def validar_assinatura(msg: dict) -> dict:
@@ -61,7 +62,15 @@ def validar_assinatura(msg: dict) -> dict:
         raise ValueError(f"expiração deve ficar entre 1 e {EXPIRACAO_MAX} velas")
     if not PAYOUT_MIN <= payout <= PAYOUT_MAX:
         raise ValueError(f"payout deve ficar entre {PAYOUT_MIN:.0f}% e {PAYOUT_MAX:.0f}%")
-    return {"simbolo": simbolo, "timeframe": nome_timeframe(seg), "expiracao": expiracao, "payout": payout / 100}
+    sid = msg.get("sid")
+    sid = str(sid) if sid is not None and SID_VALIDO.match(str(sid)) else None
+    return {
+        "simbolo": simbolo,
+        "timeframe": nome_timeframe(seg),
+        "expiracao": expiracao,
+        "payout": payout / 100,
+        "sid": sid,
+    }
 
 
 @asynccontextmanager

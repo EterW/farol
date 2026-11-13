@@ -45,8 +45,9 @@ const S = {
   config: null, ativos: [], nomes: {}, ws: null, conectado: false,
   ativas: new Set(), simbolo: null, tf: "", casas: 5, seg: 60, janelaEntrada: 15,
   fechaEm: null, offset: 0, estados: {}, ranking: null, veredito: null, analise: null,
-  limite: 70, lider: null, barras: [], sinais: [], bolinhas: {}, rkAbertos: new Set(), rkAgora: {},
-  placar: { WIN: 0, LOSS: 0, EMPATE: 0 }, placarFarol: { WIN: 0, LOSS: 0, EMPATE: 0 },
+  limite: 70, lider: null, barras: [], sinais: [], rkAbertos: new Set(), rkAgora: {},
+  sid: null, nSid: 0, descartadas: 0, timerCarga: null, carga: null,
+  ops: [], opsAba: store.get("opsAba", "ativo"),   // operações de TODOS os contextos, filtradas na tela
 };
 const P = {
   som: store.get("som", true), volume: store.get("volume", 70), obs: store.get("observacao", false),
@@ -276,7 +277,7 @@ function desenharFaixa(caixa, p, grande = false) {
 
 // ================================================================== veredito (cartão grande + barra compacta)
 const ICONE_ESTADO = { PREPARANDO: "i-ampulheta", AGUARDAR: "i-pausa", CONFLITO: "i-alerta", OBSERVACAO: "i-olho",
-                       INICIO: "i-play", CARREGANDO: "i-ampulheta" };
+                       INICIO: "i-play", CARREGANDO: "i-ampulheta", ERRO: "i-alerta" };
 let assinaturaVeredito = "";
 function trocarIcone(caixa, icone) {
   const use = caixa.querySelector("use");
@@ -349,6 +350,7 @@ function mostrarVeredito(v) {
   setTxt($("vTitulo"), v.titulo);
   pilulaDirecao($("vDirecao"), v, "v-direcao");
   $("vFrase").textContent = v.frase || "";
+  mostrarCarga(v);
   mostrarFormacao(v);
   const p = v.prob;
   $("vProb").hidden = !p;
@@ -378,13 +380,42 @@ function mostrarVeredito(v) {
   atualizarRelogio();
   desenharMarcadores();
 }
-function vereditoLocal(estado) {
+function vereditoLocal(estado, texto) {
   if (estado === "INICIO") return { estado, titulo: "Escolha um ativo para começar",
     frase: "Toque em Conectar. O Farol analisa o histórico e só sugere entrada quando uma estratégia tem vantagem comprovada." };
-  return { estado: "CARREGANDO", titulo: "Analisando o histórico…",
-    frase: "Carregando as velas e calculando todas as estratégias. Leva alguns segundos." };
+  if (estado === "ERRO") return { estado, titulo: "Não foi possível carregar", frase: texto };
+  return { estado: "CARREGANDO", titulo: "Analisando o histórico…", carga: S.carga,
+    frase: `${nomeAtivo(S.simbolo)} ${S.tf}: carregando as velas e calculando as estratégias.` };
 }
-function aplicarVeredito(v) { if (v) { S.veredito = v; mostrarVeredito(v); } }
+/* Etapas do carregamento (mensagens "carga" do servidor): esqueleto + barra + texto. Nunca fica preso:
+   o servidor desiste em 30 s e a página também (TEMPO_CARGA), mostrando "Tentar de novo". */
+const TEMPO_CARGA = 30000;
+function mostrarCarga(v) {
+  const caixa = $("vCarga"), carregando = v.estado === "CARREGANDO";
+  caixa.hidden = !carregando;
+  const acao = $("vAcao");
+  acao.hidden = !["INICIO", "ERRO"].includes(v.estado);
+  setTxt(acao, v.estado === "ERRO" ? "Tentar de novo" : "Escolher ativo e conectar");
+  if (!carregando) return;
+  const c = v.carga || { etapa: "velas", texto: "Conectando ao servidor…", feito: 0, total: 1 };
+  const frac = c.total ? Math.min(1, (c.feito || 0) / c.total) : 0;
+  const total = c.etapa === "estrategias" ? 0.6 + 0.4 * frac : 0.6 * frac;   // velas = 60% da barra
+  $("vCargaBarra").querySelector("i").style.width = `${Math.round(100 * total)}%`;
+  $("vCargaBarra").setAttribute("aria-valuenow", String(Math.round(100 * total)));
+  const detalhe = c.etapa === "velas" && c.total ? ` ${num(c.feito || 0, 0)} de ${num(c.total, 0)}` : "";
+  setTxt($("vCargaTxt"), c.texto + detalhe);
+  for (const li of $("vCargaEtapas").children) {
+    const ordem = { velas: 0, estrategias: 1 }[c.etapa] ?? 0, k = Number(li.dataset.k);
+    li.className = k < ordem ? "feita" : k === ordem ? "atual" : "";
+  }
+}
+function aplicarCarga(msg) {
+  if (msg.etapa === "erro") { pararTimerCarga(); mostrarVeredito(vereditoLocal("ERRO", msg.texto)); return; }
+  S.carga = msg;
+  if (!S.veredito || S.veredito.estado === "CARREGANDO") mostrarVeredito(vereditoLocal("CARREGANDO"));
+}
+function pararTimerCarga() { clearTimeout(S.timerCarga); S.timerCarga = null; }
+function aplicarVeredito(v) { if (v) { pararTimerCarga(); S.veredito = v; mostrarVeredito(v); } }
 function alturaTopo() { return $("topo").offsetHeight; }
 function atualizarBarraCompacta() {
   const r = $("veredito").getBoundingClientRect();
@@ -710,31 +741,58 @@ function abrirAtivo(simbolo) {
   conectar();
 }
 
-// ================================================================== operações da sessão (bolinhas)
+// ================================================================== operações da sessão (filtradas por ativo + tempo)
+/* Cada operação guarda o contexto (ativo + tempo gráfico + sid). "Este ativo" mostra só as do contexto
+   atual (padrão); "Todas" mostra todas, cada uma com o rótulo do ativo e do tempo. Totais separados. */
+const ROTULO_RES = { WIN: "WIN", LOSS: "LOSS", EMPATE: "EMPATE", CANCELADO: "cancelada" };
+const MAX_OPS = 300;
+const contextoAtual = (o) => o.simbolo === S.simbolo && o.tf === S.tf;
 function adicionarSinal(msg) {
-  const lista = $("bolinhas");
-  if (lista.querySelector(".vazio-txt")) lista.replaceChildren();
-  const b = el("li", "bolinha pend" + (msg.principal ? " principal" : ""));
-  b.dataset.dica = `${fmtHora(msg.t + S.seg)} · ${msg.nome}\n${ACAO[msg.dir]} ${SETA[msg.dir]} · ${nomeAtivo(msg.ativo)}\naguardando resultado`;
-  b.setAttribute("aria-label", `${msg.nome}, ${ACAO[msg.dir]}, aguardando`);
-  b.tabIndex = 0;
-  lista.appendChild(b);
-  S.bolinhas[msg.op] = { li: b, msg };
-  while (lista.children.length > 40) lista.firstChild.remove();
+  S.ops.push({ sid: S.sid, op: msg.op, simbolo: msg.ativo, tf: msg.timeframe || S.tf, id: msg.id, nome: msg.nome,
+               dir: msg.dir, t: msg.t, principal: !!msg.principal, resultado: null });
+  if (S.ops.length > MAX_OPS) S.ops.splice(0, S.ops.length - MAX_OPS);
+  desenharOps();
 }
 function aplicarResultado(msg) {
-  const x = S.bolinhas[msg.op], r = msg.resultado;
-  if (x) {
-    x.li.className = `bolinha ${r}` + (x.msg.principal ? " principal" : "");
-    x.li.replaceChildren(r === "WIN" ? svgUso("i-check") : r === "LOSS" ? svgUso("i-x") : document.createTextNode("="));
-    const rotulo = { WIN: "acerto (WIN)", LOSS: "erro (LOSS)", EMPATE: "empate", CANCELADO: "cancelada" }[r] || r;
-    x.li.dataset.dica = x.li.dataset.dica.replace("aguardando resultado", rotulo);
-    x.li.setAttribute("aria-label", `${x.msg.nome}: ${rotulo}`);
+  const o = S.ops.find((x) => x.sid === S.sid && x.op === msg.op);
+  if (o) { o.resultado = msg.resultado; if (msg.principal !== undefined) o.principal = !!msg.principal; }
+  desenharOps();
+}
+function cancelarPendentes() {   // trocou de ativo/tempo: o servidor registra as abertas como CANCELADO
+  for (const o of S.ops) if (!o.resultado) o.resultado = "CANCELADO";
+}
+function totais(lista) {
+  const t = { WIN: 0, LOSS: 0, EMPATE: 0 }, f = { WIN: 0, LOSS: 0, EMPATE: 0 };
+  for (const o of lista) if (o.resultado in t) { t[o.resultado]++; if (o.principal) f[o.resultado]++; }
+  return `Avisadas pelo Farol: ${f.WIN} WIN · ${f.LOSS} LOSS · ${f.EMPATE} EMPATE  |  Todas as estratégias: ${t.WIN} WIN · ${t.LOSS} LOSS · ${t.EMPATE} EMPATE`;
+}
+function desenharOps() {
+  const todas = S.opsAba === "todas";
+  for (const [id, aba] of [["opsAbaAtivo", "ativo"], ["opsAbaTodas", "todas"]]) {
+    const b = $(id); b.setAttribute("aria-selected", String(S.opsAba === aba)); b.classList.toggle("on", S.opsAba === aba);
   }
-  const principal = msg.principal !== undefined ? msg.principal : !!(x && x.msg.principal);
-  if (r in S.placar) { S.placar[r]++; if (principal) S.placarFarol[r]++; }
-  const f = S.placarFarol, t = S.placar;
-  setTxt($("placar"), `Avisadas: ${f.WIN} WIN · ${f.LOSS} LOSS · ${f.EMPATE} EMPATE  |  Todas: ${t.WIN} WIN · ${t.LOSS} LOSS`);
+  setTxt($("opsAbaAtivo"), S.simbolo ? `Este ativo (${nomeAtivo(S.simbolo)} ${S.tf})` : "Este ativo");
+  const lista = todas ? S.ops : S.ops.filter(contextoAtual);
+  setTxt($("placar"), lista.length ? totais(lista) : "");
+  const ul = $("listaOps"); ul.replaceChildren();
+  if (!lista.length) {
+    ul.appendChild(el("li", "vazio-txt", todas ? "Nenhuma operação nesta sessão ainda."
+      : "Nenhuma operação neste ativo e tempo gráfico ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado."));
+    return;
+  }
+  for (const o of lista.slice(-60).reverse()) {
+    const li = el("li", `op ${o.resultado || "pend"}${o.principal ? " principal" : ""}`);
+    li.dataset.simbolo = o.simbolo; li.dataset.tf = o.tf;
+    const res = el("span", `op-res ${o.resultado || "pend"}`);
+    if (o.resultado === "WIN") res.append(svgUso("i-check"), document.createTextNode("WIN"));
+    else if (o.resultado === "LOSS") res.append(svgUso("i-x"), document.createTextNode("LOSS"));
+    else res.textContent = o.resultado ? ROTULO_RES[o.resultado] : "aguardando";
+    const dir = el("span", `op-dir ${o.dir}`, `${SETA[o.dir]} ${ACAO[o.dir]}`);
+    li.append(el("span", "op-hora numero", fmtHora(o.t + S.seg)), el("span", "op-ctx", `${nomeAtivo(o.simbolo)} · ${o.tf}`),
+              el("span", "op-nome", o.nome + (o.principal ? " ★" : "")), dir, res);
+    li.setAttribute("aria-label", `${fmtHora(o.t)} ${nomeAtivo(o.simbolo)} ${o.tf}, ${o.nome}, ${ACAO[o.dir]}, ${o.resultado ? ROTULO_RES[o.resultado] : "aguardando resultado"}${o.principal ? ", entrada avisada" : ""}`);
+    ul.appendChild(li);
+  }
 }
 
 // ================================================================== conexão com o servidor local
@@ -773,8 +831,15 @@ function abrirWs() {
     };
   });
 }
+/* Toda mensagem do servidor traz o sid do contexto (ativo + tempo) em que foi gerada. Depois de uma troca,
+   respostas atrasadas do contexto anterior são descartadas aqui (condição de corrida). */
 function tratar(msg) {
+  if (!DEMO && msg.tipo !== "conexao" && msg.sid !== S.sid) {
+    S.descartadas++; document.documentElement.dataset.descartadas = String(S.descartadas);
+    return;
+  }
   switch (msg.tipo) {
+    case "carga": aplicarCarga(msg); break;
     case "status": setStatus(msg.texto, msg.nivel); break;
     case "conexao": setConexao(msg); break;
     case "historico": aplicarHistorico(msg); break;
@@ -814,7 +879,29 @@ function aplicarHistorico(msg) {
   setTxt($("chipAtivo"), `${nomeAtivo(msg.simbolo)} · ${msg.timeframe}`);
   const ult = msg.velas[msg.velas.length - 1];
   if (ult) setTxt($("lgPreco"), ult[4].toFixed(S.casas));
+  document.body.dataset.contexto = `${msg.simbolo}|${msg.timeframe}`;
   marcarTopAtual();
+  desenharOps();
+}
+/* Troca de ativo/tempo: descarta TODO o estado do contexto anterior antes de pedir o novo. */
+function limparContexto(simbolo, tf) {
+  cancelarPendentes();
+  S.simbolo = simbolo; S.tf = tf;
+  S.barras = []; S.sinais = []; S.estados = {}; S.ranking = null; S.lider = null; S.analise = null;
+  S.veredito = null; S.fechaEm = null; S.carga = null; S.rkAgora = {};
+  G.assinatura = ""; G.grupos = new Map();
+  if (G.serie) { G.serie.setData([]); G.serie.setMarkers([]); }
+  $("vazio").hidden = false; setTxt($("vazio"), `Carregando velas de ${nomeAtivo(simbolo)} ${tf}…`);
+  $("dicaGrafico").hidden = true;
+  setTxt($("lgAtivo"), `${nomeAtivo(simbolo)} · ${tf}`); setTxt($("lgPreco"), "");
+  setTxt($("mAtivo"), `${nomeAtivo(simbolo)} ${tf}`); setTxt($("mFrase"), "—");
+  setTxt($("resumoTexto"), "Calculando o resumo do mercado…");
+  $("rkGrupos").replaceChildren(el("p", "vazio-txt", "Calculando as estratégias…"));
+  $("rkTabela").replaceChildren();
+  assinaturaTop = ""; $("topLista").replaceChildren(el("li", "vazio-txt", `Carregando ativos no ${tf}…`)); setTxt($("topInfo"), "");
+  document.body.dataset.contexto = "";
+  assinaturaVeredito = "";
+  desenharOps();
 }
 
 // ================================================================== conectar / parar
@@ -833,18 +920,26 @@ async function conectar() {
   const payout = Math.min(500, Math.max(1, parseFloat($("inpPayout").value) || 85));
   store.set("escolha", { mercado: $("selMercado").value, simbolo, tf: $("selTf").value, custom: $("inpTfCustom").value, exp, payout });
   S.conectado = true; botaoConectar(true);
-  S.veredito = null;
+  S.sid = `s${Date.now().toString(36)}${++S.nSid}`;   // novo contexto: o que chegar com outro sid é descartado
+  const sid = S.sid;
+  limparContexto(simbolo, tf.toUpperCase());
   setTxt($("chipAtivo"), `${nomeAtivo(simbolo)} · ${tf}`);
-  if (simbolo !== S.simbolo) { S.simbolo = simbolo; S.tf = tf; }
   mostrarVeredito(vereditoLocal("CARREGANDO"));
-  try { await abrirWs(); } catch { return; }
-  enviar({ acao: "assinar", simbolo, timeframe: tf, expiracao: exp, payout, ativas: [...S.ativas],
+  pararTimerCarga();
+  S.timerCarga = setTimeout(() => {
+    if (S.sid === sid && (!S.veredito || S.veredito.estado === "CARREGANDO"))
+      mostrarVeredito(vereditoLocal("ERRO", `O carregamento de ${nomeAtivo(simbolo)} ${tf} passou de 30 s. Verifique a internet e toque em “Tentar de novo”.`));
+  }, TEMPO_CARGA);
+  try { await abrirWs(); } catch { mostrarVeredito(vereditoLocal("ERRO", "Sem conexão com o servidor local do Farol (python live.py está aberto?).")); return; }
+  if (S.sid !== sid) return;   // outra troca aconteceu enquanto a conexão abria
+  enviar({ acao: "assinar", sid, simbolo, timeframe: tf, expiracao: exp, payout, ativas: [...S.ativas],
            observacao: P.obs, avisar_obs: P.avisarObs, limite_formacao: S.limite });
 }
 function parar() {
   S.conectado = false; botaoConectar(false);
   enviar({ acao: "parar" });
-  S.fechaEm = null; S.veredito = null;
+  pararTimerCarga(); cancelarPendentes(); desenharOps();
+  S.sid = null; S.fechaEm = null; S.veredito = null;
   mostrarVeredito(vereditoLocal("INICIO"));
 }
 function atualizarBeInfo() {
@@ -899,7 +994,9 @@ async function testarAlertas() {
 }
 function ligarControles() {
   $("btnConectar").onclick = () => { if (S.conectado) parar(); else if (!DEMO) conectar(); };
-  $("vAcao").onclick = () => $("dlgAtivo").showModal();
+  $("vAcao").onclick = () => { if (S.veredito && S.veredito.estado === "ERRO" || $("veredito").dataset.estado === "ERRO") conectar(); else $("dlgAtivo").showModal(); };
+  $("opsAbaAtivo").onclick = () => { S.opsAba = "ativo"; store.set("opsAba", "ativo"); desenharOps(); };
+  $("opsAbaTodas").onclick = () => { S.opsAba = "todas"; store.set("opsAba", "todas"); desenharOps(); };
   $("btnAtivo").onclick = () => $("dlgAtivo").showModal();
   $("dlgAtivo").addEventListener("close", () => { if ($("dlgAtivo").returnValue === "conectar" && !DEMO) conectar(); });
   $("inpPayout").addEventListener("input", atualizarBeInfo);
@@ -1078,6 +1175,14 @@ async function init() {
   setTxt($("chipAtivo"), `${nomeAtivo(escolha.simbolo || "frxEURUSD")} · ${escolha.tf === "custom" ? escolha.custom : escolha.tf || "M5"}`);
   await carregarAtivos(escolha);
   if (params.has("auto")) conectar();   // ex.: /?auto
+}
+// gancho SÓ para os testes automáticos (/?teste=1): lê o estado e injeta mensagens como se viessem do servidor
+if (params.get("teste") === "1") {
+  window.farol = {
+    estado: () => ({ sid: S.sid, simbolo: S.simbolo, tf: S.tf, seg: S.seg, barras: S.barras.map((b) => b.time),
+                     ops: S.ops.map((o) => ({ ...o })), veredito: S.veredito && S.veredito.estado, descartadas: S.descartadas }),
+    tratar: (m) => tratar(m),
+  };
 }
 init();
 })();

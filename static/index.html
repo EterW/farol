@@ -114,6 +114,15 @@
       </div>
       <p class="v-frase" id="vFrase">Toque em <b>Conectar</b>. O Farol analisa o histórico e só sugere entrada quando uma estratégia tem vantagem comprovada.</p>
 
+      <div class="v-carga" id="vCarga" hidden>
+        <ol class="v-carga-etapas" id="vCargaEtapas" aria-label="Etapas do carregamento">
+          <li data-k="0">Velas</li><li data-k="1">Estratégias</li><li data-k="2">Veredito</li>
+        </ol>
+        <div class="barra-carga" id="vCargaBarra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Progresso do carregamento"><i></i></div>
+        <p class="v-carga-txt" id="vCargaTxt" role="status" aria-live="polite">Conectando ao servidor…</p>
+        <div class="esqueleto" aria-hidden="true"><i></i><i></i><i></i></div>
+      </div>
+
       <div class="v-formacao" id="vFormacao" hidden>
         <div class="v-form-topo">
           <span class="v-rotulo">Progresso de formação <button type="button" class="q" id="qProgresso" aria-label="Como o progresso é calculado" data-dica="">?</button></span>
@@ -226,9 +235,16 @@
       </section>
 
       <section class="cartao sessao-hist so-detalhado" id="cartaoSessao" aria-labelledby="tSessao">
-        <header class="cartao-topo"><h2 id="tSessao">Operações desta sessão</h2><small id="placar"></small></header>
-        <ol class="bolinhas" id="bolinhas"><li class="vazio-txt">Nenhuma operação ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado.</li></ol>
-        <p class="sub"><span class="bolinha mini principal" aria-hidden="true"></span> contorno = entrada avisada pelo Farol (ENTRAR AGORA). Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
+        <header class="cartao-topo">
+          <h2 id="tSessao">Operações desta sessão</h2>
+          <div class="segmentado abas-ops" role="tablist" aria-label="Quais operações mostrar">
+            <button type="button" role="tab" id="opsAbaAtivo" class="on" aria-selected="true" aria-controls="listaOps">Este ativo</button>
+            <button type="button" role="tab" id="opsAbaTodas" aria-selected="false" aria-controls="listaOps">Todas</button>
+          </div>
+        </header>
+        <p class="placar numero" id="placar"></p>
+        <ol class="lista-ops" id="listaOps" role="tabpanel"><li class="vazio-txt">Nenhuma operação ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado.</li></ol>
+        <p class="sub">★ e contorno = entrada avisada pelo Farol (ENTRAR AGORA). Ao trocar de ativo ou tempo, as operações em aberto ficam como “cancelada”. Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
       </section>
     </div>
 

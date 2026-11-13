@@ -18,7 +18,15 @@ from dataclasses import replace
 import pandas as pd
 
 from . import backtest as bt
-from .config import CONFIANCA, JANELA_RANKING, MIN_OPERACOES, MIN_OPS_AMOSTRA, MIN_OPS_FORCA, Z_FORCA
+from .config import (
+    CONFIANCA,
+    JANELA_RANKING,
+    MIN_OPERACOES,
+    MIN_OPS_AMOSTRA,
+    MIN_OPS_FORCA,
+    TAXA_MAX_PREPARO,
+    Z_FORCA,
+)
 from .estatistica import break_even, wilson, z_duas_proporcoes
 from .estrategias import ESTRATEGIAS, ultimo_valor
 from .log import obter
@@ -92,6 +100,12 @@ def selo(janela: dict | None, forca: dict | None, min_ops: int = MIN_OPERACOES) 
     }
 
 
+def preparo_informativo(taxa: float | None) -> bool:
+    """"Se formando" só é informação quando o sinal é raro. Uma estratégia que dá sinal em quase toda vela
+    (ex.: Seguir cor, ~97% das velas) estaria "se formando 100%" o tempo todo: isso não diz nada."""
+    return taxa is not None and taxa <= TAXA_MAX_PREPARO
+
+
 def status(linha: dict) -> int:
     """0 = comprovada, 1 = demais com amostra, 2 = poucos dados, 3 = sem dados/erro (ordem da lista)."""
     j = linha.get("janela")
@@ -116,18 +130,23 @@ def calcular_ranking(
     estrategias=None,
     params: dict | None = None,
     elegiveis: set | None = None,
+    ao_progresso=None,
 ) -> dict:
     """Ranking de todas as estratégias em `df` (velas FECHADAS).
 
     `elegiveis`: ids que podem ser escolhidos como "melhor" (ex.: as marcadas na tela). None = todas.
-    Devolve também o último sinal de cada estratégia (mesma passada de cálculo)."""
+    `ao_progresso(feitas, total, nome)`: chamado depois de cada estratégia (tela de carregamento).
+    Devolve também o último sinal de cada estratégia e a taxa de sinal (fração das velas da janela com
+    sinal), que diz se o "se formando" da estratégia é informativo (ver TAXA_MAX_PREPARO)."""
     estrategias = estrategias or ESTRATEGIAS
     params = params or {}
     cfg = replace(cfg, gales=0)
     be = break_even(cfg.payout)
     inicio_janela = max(0, len(df) - int(janela))
     linhas = []
-    for est in estrategias:
+    for k, est in enumerate(estrategias):
+        if ao_progresso:
+            ao_progresso(k, len(estrategias), est.nome)
         p = params.get(est.id, {})
         try:
             sinais = est.gerar_sinais(df, **p)
@@ -145,6 +164,8 @@ def calcular_ranking(
                     "forca": None,
                     "sinal": None,
                     "selo": selo(None, None, min_ops),
+                    "taxa_sinal": None,
+                    "preparo_informativo": False,
                 }
             )
             continue
@@ -153,6 +174,8 @@ def calcular_ranking(
         hist = estatisticas(ops, cfg.payout, min_ops)
         ant = estatisticas(ops[~na_janela], cfg.payout, min_ops)
         forca = comparar_forca(jan, ant)
+        recentes = sinais.iloc[inicio_janela:]
+        taxa = float(recentes.isin(["CALL", "PUT"]).mean()) if len(recentes) else None
         linhas.append(
             {
                 "id": est.id,
@@ -164,8 +187,12 @@ def calcular_ranking(
                 "forca": forca,
                 "sinal": ultimo_valor(sinais),
                 "selo": selo(jan, forca, min_ops),
+                "taxa_sinal": taxa,
+                "preparo_informativo": preparo_informativo(taxa),
             }
         )
+    if ao_progresso:
+        ao_progresso(len(estrategias), len(estrategias), "")
 
     linhas.sort(key=chave_ordem)
     melhor = next(
