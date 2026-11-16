@@ -15,6 +15,7 @@ import asyncio
 import socket
 import threading
 import time
+from itertools import pairwise
 
 import pytest
 
@@ -139,12 +140,14 @@ def conferir(pg, simbolo: str, tf: str) -> dict:
     assert pg.evaluate("document.getElementById('veredito').dataset.estado") not in ("CARREGANDO", "ERRO")
     barras = e["barras"]
     assert len(barras) > 50, "gráfico sem velas"
-    difs = {b - a for a, b in zip(barras, barras[1:])}
+    difs = {b - a for a, b in pairwise(barras)}
     assert all(d > 0 and d % TFS[tf] == 0 for d in difs), f"velas de outro tempo gráfico misturadas: {sorted(difs)[:5]}"
     assert tf in pg.inner_text("#lgAtivo") and tf in pg.inner_text("#vContexto")
     # "Este ativo": só operações do contexto atual
     pg.click("#opsAbaAtivo")
-    ctx = pg.evaluate("[...document.querySelectorAll('#listaOps li.op')].map(li => [li.dataset.simbolo, li.dataset.tf])")
+    ctx = pg.evaluate(
+        "[...document.querySelectorAll('#listaOps li.op')].map(li => [li.dataset.simbolo, li.dataset.tf])"
+    )
     assert all(c == [simbolo, tf] for c in ctx), f"operação de outro contexto em 'Este ativo': {ctx}"
     return e
 
@@ -179,8 +182,18 @@ def test_operacoes_filtradas_por_ativo_e_tempo_e_resposta_atrasada_ignorada(pagi
     e = esperar_pronto(pg, "frxGBPUSD", "M2")
     sid_gbp = e["sid"]
     t = e["barras"][-2] - 0  # epoch local do gráfico não importa aqui; só o rótulo
-    sinal = {"tipo": "sinal", "op": 9001, "id": "engolfo", "nome": "Engolfo", "dir": "CALL", "t": t,
-             "registrado": True, "principal": False, "ativo": "frxGBPUSD", "timeframe": "M2"}
+    sinal = {
+        "tipo": "sinal",
+        "op": 9001,
+        "id": "engolfo",
+        "nome": "Engolfo",
+        "dir": "CALL",
+        "t": t,
+        "registrado": True,
+        "principal": False,
+        "ativo": "frxGBPUSD",
+        "timeframe": "M2",
+    }
     pg.evaluate("m => window.farol.tratar(m)", {**sinal, "sid": "contexto-velho"})  # atrasada: ignorar
     pg.evaluate("m => window.farol.tratar(m)", {**sinal, "sid": sid_gbp})
     ops = pg.evaluate("window.farol.estado().ops")
