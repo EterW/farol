@@ -360,6 +360,8 @@ details.rk-grupo[open] > summary::before { transform: rotate(90deg); }
 .rk-pos { grid-area: pos; align-self: start; padding-top: 2px; font: 600 var(--fs-pequeno)/1 var(--fonte-numero); color: var(--texto-3); text-align: center; }
 .rk-nome { grid-area: nome; display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; font-size: var(--fs-texto); }
 .rk-nome span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rk-nome .ic-est { flex: none; width: 18px; height: 18px; background: currentColor; opacity: .75;
+  -webkit-mask: var(--ic-url) center / contain no-repeat; mask: var(--ic-url) center / contain no-repeat; }
 .badge-lider { flex: none; font: 700 var(--fs-legenda)/1 var(--fonte-texto); letter-spacing: .04em; padding: 3px 7px; border-radius: 6px; background: var(--marca); color: var(--marca-texto); }
 .rk-linha .faixa-prob { grid-area: barra; }
 .rk-pct { grid-area: pct; text-align: right; font: 600 var(--fs-texto)/1.1 var(--fonte-numero); white-space: nowrap; }

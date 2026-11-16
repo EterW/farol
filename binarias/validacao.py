@@ -6,7 +6,9 @@ Walk-forward sem olhar o final:
     pelo limite inferior do IC de Wilson menos o break-even (exigindo o mínimo de operações).
   * TESTE: os parâmetros escolhidos são aplicados aos 30% finais. Os indicadores podem usar velas do
     treino como aquecimento (é passado), e só contam operações com sinal a partir do corte.
-Passa = no TESTE de TODOS os pares: >= min_ops operações E limite inferior do IC acima do break-even.
+Passa = no TESTE de TODOS os pares: >= min_ops operações E limite inferior do IC acima do break-even E
+p-valor binomial ajustado por Holm abaixo de 2,5% (correção para TODAS as hipóteses estratégia × par
+testadas fora da amostra). Bonferroni e Benjamini-Hochberg (FDR) também são reportados.
 """
 
 from dataclasses import replace
@@ -15,7 +17,7 @@ import pandas as pd
 
 from . import backtest as bt
 from .config import FRACAO_TREINO, MIN_OPERACOES
-from .estatistica import break_even
+from .estatistica import ALFA_UNILATERAL, METODOS_CORRECAO, ajustar_p, break_even, p_valor_acima
 from .estrategias import ESTRATEGIAS
 from .log import obter
 from .ranking import estatisticas
@@ -65,6 +67,7 @@ def _linha_stats(prefixo: str, st: dict) -> dict:
     return {
         f"{prefixo}_ops": st["operacoes"],
         f"{prefixo}_decididas": st["decididas"],
+        f"{prefixo}_wins": st["wins"],
         f"{prefixo}_acerto_%": pct(st["acerto"]),
         f"{prefixo}_ic95_inf_%": pct(st["ic_inf"]),
         f"{prefixo}_ic95_sup_%": pct(st["ic_sup"]),
@@ -131,8 +134,16 @@ def walk_forward_todos(
 def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str = "") -> tuple[pd.DataFrame, str]:
     """Resumo por estratégia: passa em TODOS os pares no teste?"""
     be = break_even(cfg.payout)
-    ok = wf[wf["erro"].fillna("") == ""] if "erro" in wf else wf
+    ok = (wf[wf["erro"].fillna("") == ""] if "erro" in wf else wf).copy()
     pares = sorted(wf["ativo"].unique())
+    # correção de testes múltiplos: uma hipótese por (estratégia, par) no TESTE; H0: acerto <= break-even
+    m = len(ok)
+    pvals = [p_valor_acima(int(w), int(n), be) for w, n in zip(ok["teste_wins"], ok["teste_decididas"], strict=True)]
+    ok["teste_p"] = pvals
+    for metodo in METODOS_CORRECAO:
+        ok[f"teste_p_{metodo}"] = ajustar_p(pvals, metodo)
+    ok["teste_vantagem_holm"] = ok["teste_vantagem"].astype(bool) & (ok["teste_p_holm"] < ALFA_UNILATERAL)
+    combinacoes_total = int(ok["combinacoes_testadas"].sum()) if "combinacoes_testadas" in ok else 0
     linhas = []
     for nome, g in ok.groupby("estrategia", sort=False):
         linhas.append(
@@ -150,7 +161,17 @@ def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str 
                 else None,
                 "ops_teste_total": int(g["teste_ops"].sum()),
                 "lucro_teste_total": round(float(g["teste_lucro"].sum()), 2),
-                "PASSA_EM_TODOS": bool(len(g) == len(pares) and g["teste_vantagem"].all()),
+                "pares_significativos_holm": int(g["teste_vantagem_holm"].sum()),
+                "pares_significativos_bonferroni": int(
+                    (g["teste_vantagem"].astype(bool) & (g["teste_p_bonferroni"] < ALFA_UNILATERAL)).sum()
+                ),
+                "pares_significativos_fdr": int(
+                    (g["teste_vantagem"].astype(bool) & (g["teste_p_bh"] < ALFA_UNILATERAL)).sum()
+                ),
+                "menor_p_bruto": round(float(g["teste_p"].min()), 4),
+                "menor_p_holm": round(float(g["teste_p_holm"].min()), 4),
+                "combinacoes_no_treino": int(g["combinacoes_testadas"].max()) if "combinacoes_testadas" in g else 1,
+                "PASSA_EM_TODOS": bool(len(g) == len(pares) and g["teste_vantagem_holm"].all()),
             }
         )
     resumo = pd.DataFrame(linhas).sort_values(
@@ -181,7 +202,23 @@ def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str 
     t.append(
         f"Critério para PASSAR: no período de TESTE (dados nunca vistos na escolha) de TODOS os "
         f"{len(pares)} pares, pelo menos {min_ops} operações decididas E limite inferior do IC de Wilson 95% "
-        f"acima de {be:.2%}."
+        f"acima de {be:.2%} E p-valor ajustado por Holm < {ALFA_UNILATERAL:.1%}."
+    )
+    t.append(
+        f"Testes múltiplos: {ok['estrategia'].nunique()} estratégias × {len(pares)} pares = {m} hipóteses fora da "
+        f"amostra; {combinacoes_total} combinações de parâmetros avaliadas no treino (a escolha no treino não "
+        "toca o teste, por isso a correção é feita sobre as hipóteses do teste)."
+    )
+    sig = {
+        nome: int((ok["teste_vantagem"].astype(bool) & (ok[f"teste_p_{met}"] < ALFA_UNILATERAL)).sum())
+        for met, nome in METODOS_CORRECAO.items()
+    }
+    sem_correcao = int(ok["teste_vantagem"].astype(bool).sum())
+    t.append(
+        f"Pares estratégia×ativo com vantagem no teste: sem correção {sem_correcao}/{m}; "
+        + "; ".join(f"{nome} {v}/{m}" for nome, v in sig.items())
+        + ". (Por acaso, sem correção, seriam esperados ~"
+        + f"{m * ALFA_UNILATERAL:.1f} falsos positivos se nenhuma tiver vantagem real.)"
     )
     t.append("")
     if passam:
@@ -202,6 +239,8 @@ def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str 
             f"  [{marca:^9}] {r['estrategia']:<28} vantagem no teste em {r['pares_com_vantagem_no_teste']}/"
             f"{r['pares_testados']} pares (treino: {r['pares_com_vantagem_no_treino']}/{r['pares_testados']}), "
             f"acerto médio teste {r['acerto_medio_teste_%']}%, pior IC inf {r['pior_ic95_inf_teste_%']}%, "
+            f"Holm {r['pares_significativos_holm']}/{r['pares_testados']}, "
+            f"menor p {r['menor_p_bruto']} (Holm {r['menor_p_holm']}), "
             f"lucro teste {r['lucro_teste_total']}"
         )
     t.append("")
@@ -209,4 +248,6 @@ def relatorio(wf: pd.DataFrame, cfg: bt.ConfigBacktest, min_ops: int, info: str 
     t.extend(selecao)
     t.append("")
     t.append("Observação: entrada simulada na abertura da vela seguinte; atraso/slippage reais não modelados.")
+    resumo.attrs["hipoteses"] = m
+    resumo.attrs["combinacoes"] = combinacoes_total
     return resumo, "\n".join(t)

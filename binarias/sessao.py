@@ -211,7 +211,9 @@ class Sessao:
         }
 
     # ------------------------------------------------------------------ controle
-    async def iniciar(self, simbolo: str, timeframe: str, expiracao: int, payout: float, sid: str | None = None) -> None:
+    async def iniciar(
+        self, simbolo: str, timeframe: str, expiracao: int, payout: float, sid: str | None = None
+    ) -> None:
         """Começa a acompanhar um ativo/timeframe. Antes, descarta TODO o estado do contexto anterior."""
         await self.parar()
         self.sid = sid

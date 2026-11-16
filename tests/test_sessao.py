@@ -7,6 +7,7 @@ from test_hub_scanner import _esperar, rodar
 
 from binarias import hub as hubmod
 from binarias import sessao as sessmod
+from binarias.estrategias import ESTRATEGIAS
 
 
 class NavFalso:
@@ -56,7 +57,7 @@ def test_sessao_ao_vivo_completa(monkeypatch, tmp_path):
                 hist = nav.ultimo("historico")
                 assert hist["timeframe"] == "M1" and len(hist["velas"]) > 100
                 r = nav.ultimo("ranking")
-                assert len(r["linhas"]) == 11 and r["janela"] <= 300
+                assert len(r["linhas"]) == len(ESTRATEGIAS) and r["janela"] <= 300
                 assert nav.ultimo("decisao")["estado"] in ("SEM_SINAL", "AGUARDANDO", "PREPARANDO")
                 await _esperar(lambda: nav.ultimo("top3")["carregando"] == 0, timeout=20)
                 top = nav.ultimo("top3")

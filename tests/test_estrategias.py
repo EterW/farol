@@ -159,3 +159,18 @@ def test_registro_consistente():
     assert len({e.sigla for e in ESTS}) == len(ESTS)
     for e in ESTS:
         assert e.descricao and "\n" not in e.descricao
+
+
+def test_toda_estrategia_tem_icone_explicacao_e_sigla_unica():
+    import os
+
+    from binarias.config import PASTA_STATIC
+
+    siglas = [e.sigla for e in ESTS]
+    assert len(set(siglas)) == len(siglas), "siglas repetidas"
+    for est in ESTS:
+        assert est.id in E.EXPLICACAO, f"{est.id} sem explicação leiga"
+        caminho = os.path.join(PASTA_STATIC, "icones", f"{est.id}.svg")
+        assert os.path.exists(caminho), f"{est.id} sem ícone (rode python ferramentas/gerar_icones.py)"
+        with open(caminho, encoding="utf-8") as f:
+            assert f.read().startswith("<svg"), caminho

@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from conftest import df_aleatorio, df_de_ohlc
 
@@ -99,3 +100,48 @@ def test_janela_so_conta_operacoes_recentes():
     r = rk.calcular_ranking(df, bt.ConfigBacktest(), janela=200, estrategias=[_est("seguir", seguir)])
     l = r["linhas"][0]
     assert l["janela"]["operacoes"] <= 200 < l["historico"]["operacoes"]
+
+
+def _linha_fake(ident, wins, n, be=0.5405, min_ops=100):
+    from binarias.estatistica import wilson
+
+    inf, _ = wilson(wins, n)
+    j = {"wins": wins, "decididas": n, "ic_inf": inf, "vantagem": bool(n >= min_ops and inf > be)}
+    return {"id": ident, "nome": ident, "janela": j, "forca": None}
+
+
+def test_correcao_de_holm_derruba_vantagem_fraca_entre_muitas():
+    """IC acima do break-even por pouco: sozinha passa; entre 20 estratégias testadas, não."""
+    from binarias.ranking import corrigir_multiplos
+
+    be = 0.5405
+    fraca = _linha_fake("fraca", 176, 280)  # 62,9%: IC inf ~57% > 54%, p ~ 0,002
+    assert fraca["janela"]["vantagem"]
+    sozinha = [_linha_fake("fraca", 176, 280)]
+    corrigir_multiplos(sozinha, be, 100)
+    assert sozinha[0]["janela"]["vantagem"], "um único teste: a regra simples basta"
+    muitas = [fraca] + [_linha_fake(f"r{k}", 140, 280) for k in range(19)]
+    corrigir_multiplos(muitas, be, 100)
+    assert not fraca["janela"]["vantagem"] and fraca["janela"]["vantagem_simples"]
+    assert fraca["janela"]["p_holm"] > fraca["janela"]["p_valor"]
+    assert fraca["selo"]["codigo"] != "comprovada"
+
+
+def test_correcao_mantem_vantagem_forte():
+    from binarias.ranking import corrigir_multiplos
+
+    forte = _linha_fake("forte", 210, 300)  # 70%
+    linhas = [forte] + [_linha_fake(f"r{k}", 150, 300) for k in range(19)]
+    corrigir_multiplos(linhas, 0.5405, 100)
+    assert forte["janela"]["vantagem"] and forte["selo"]["codigo"] == "comprovada"
+
+
+def test_ajustes_de_p_conhecidos():
+    from binarias.estatistica import ajustar_p, p_valor_acima
+
+    p = [0.01, 0.04, 0.03, 0.005]
+    assert ajustar_p(p, "bonferroni") == [0.04, 0.16, 0.12, 0.02]
+    assert np.allclose(ajustar_p(p, "holm"), [0.03, 0.06, 0.06, 0.02])
+    assert np.allclose(ajustar_p(p, "bh"), [0.02, 0.04, 0.04, 0.02])
+    assert abs(p_valor_acima(60, 100, 0.5) - 0.028444) < 1e-5
+    assert p_valor_acima(0, 0, 0.5) == 1.0

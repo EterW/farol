@@ -55,3 +55,54 @@ def test_relatorio_quando_passa():
     wf = val.walk_forward_todos(dfs, bt.ConfigBacktest(), 0.7, 100, estrategias=[_est("seguir", seguir)])
     resumo, texto = val.relatorio(wf, bt.ConfigBacktest(), 100)
     assert resumo["PASSA_EM_TODOS"].all() and "PASSARAM EM TODOS OS PARES" in texto
+
+
+def test_relatorio_reporta_testes_multiplos():
+    dfs = {"A": df_aleatorio(1500, seed=1), "B": df_aleatorio(1500, seed=2)}
+    ests = [POR_ID["seguir_cor"], POR_ID["reversao_sequencia"], POR_ID["macd_cruzamento"]]
+    wf = val.walk_forward_todos(dfs, bt.ConfigBacktest(), 0.7, 100, estrategias=ests)
+    resumo, texto = val.relatorio(wf, bt.ConfigBacktest(), 100)
+    assert resumo.attrs["hipoteses"] == 6
+    assert resumo.attrs["combinacoes"] == 2 * sum(len(e.combinacoes()) for e in ests)
+    assert "6 hipóteses fora da amostra" in texto
+    for nome in ("Bonferroni", "Holm", "Benjamini-Hochberg"):
+        assert nome in texto
+    assert {"pares_significativos_holm", "menor_p_holm"} <= set(resumo.columns)
+
+
+def _linha_wf(ativo, k, fraca):
+    return {
+        "ativo": ativo,
+        "estrategia": f"E{k}",
+        "id": f"e{k}",
+        "params_escolhidos": "",
+        "combinacoes_testadas": 1,
+        "treino_ops": 300,
+        "treino_decididas": 300,
+        "treino_wins": 150,
+        "treino_acerto_%": 50.0,
+        "treino_ic95_inf_%": 44.0,
+        "treino_ic95_sup_%": 56.0,
+        "treino_lucro": 0.0,
+        "treino_vantagem": False,
+        "teste_ops": 280,
+        "teste_decididas": 280,
+        "teste_wins": 176 if fraca else 140,
+        "teste_acerto_%": 62.9 if fraca else 50.0,
+        "teste_ic95_inf_%": 57.1 if fraca else 44.0,
+        "teste_ic95_sup_%": 68.3,
+        "teste_lucro": 10.0,
+        "teste_vantagem": fraca,
+        "erro": "",
+    }
+
+
+def test_passa_exige_holm():
+    """Vantagem no teste por pouco em cada par, mas não significativa após Holm (20 hipóteses) -> não passa."""
+    import pandas as pd
+
+    wf = pd.DataFrame([_linha_wf(a, k, k == 0) for a in ("A", "B") for k in range(10)])
+    resumo, texto = val.relatorio(wf, bt.ConfigBacktest(), 100)
+    e0 = resumo[resumo["estrategia"] == "E0"].iloc[0]
+    assert e0["pares_com_vantagem_no_teste"] == 2 and e0["pares_significativos_holm"] == 0
+    assert not e0["PASSA_EM_TODOS"] and "NENHUMA ESTRATÉGIA PASSOU" in texto

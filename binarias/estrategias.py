@@ -20,7 +20,20 @@ from typing import NamedTuple
 
 import pandas as pd
 
-from .indicadores import bandas, cor, niveis_anteriores, rsi, sma
+from .indicadores import (
+    bandas,
+    cci,
+    cor,
+    donchian,
+    estocastico,
+    keltner,
+    macd,
+    niveis_anteriores,
+    rsi,
+    sma,
+    supertrend,
+    williams_r,
+)
 from .timeframes import granularidade_inferida
 
 __all__ = ["ESTRATEGIAS", "EXPLICACAO", "POR_ID", "Condicao", "Estrategia", "ultimo_valor"]
@@ -319,6 +332,208 @@ def engolfo(df):
 
 
 # --------------------------------------------------------------------------- #
+# MACD, Estocástico, CCI, Williams %R, Keltner, Donchian e SuperTrend
+# (VWAP existe em indicadores.py, mas não é usado: a Deriv não fornece volume)
+# --------------------------------------------------------------------------- #
+def _cruza_cima(a: pd.Series, b: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """(a estava abaixo ou igual a b na vela anterior, a está acima de b agora), só onde as duas existem."""
+    validas = a.notna() & b.notna()
+    base = validas & validas.shift(1, fill_value=False)
+    return base & (a.shift(1) <= b.shift(1)), base & (a > b)
+
+
+def macd_cruzamento_condicoes(df, rapida=12, lenta=26, sinal=9):
+    linha, sin, _ = macd(df["close"], rapida, lenta, sinal)
+    antes_c, agora_c = _cruza_cima(linha, sin)
+    antes_p, agora_p = _cruza_cima(sin, linha)
+    return [
+        _c(
+            "Linha do MACD estava abaixo (ou igual) da linha de sinal",
+            "Linha do MACD estava acima (ou igual) da linha de sinal",
+            antes_c,
+            antes_p,
+        ),
+        _c(
+            "Linha do MACD cruza para cima da linha de sinal",
+            "Linha do MACD cruza para baixo da linha de sinal",
+            agora_c,
+            agora_p,
+        ),
+    ]
+
+
+def macd_cruzamento(df, rapida=12, lenta=26, sinal=9):
+    """MACD: CALL quando a linha do MACD cruza a linha de sinal para cima; PUT para baixo."""
+    return _de_condicoes(macd_cruzamento_condicoes(df, rapida, lenta, sinal))
+
+
+def macd_tendencia_condicoes(df, periodo=50, rapida=12, lenta=26, sinal=9):
+    ma = sma(df["close"], periodo)
+    return [
+        _c(
+            f"Fecha acima da média de {periodo}",
+            f"Fecha abaixo da média de {periodo}",
+            df["close"] > ma,
+            df["close"] < ma,
+        ),
+        *macd_cruzamento_condicoes(df, rapida, lenta, sinal),
+    ]
+
+
+def macd_tendencia(df, periodo=50, rapida=12, lenta=26, sinal=9):
+    """MACD + tendência: cruzamento do MACD só a favor da média de `periodo` (acima = só CALL, abaixo = só PUT)."""
+    return _de_condicoes(macd_tendencia_condicoes(df, periodo, rapida, lenta, sinal))
+
+
+def estocastico_reversao_condicoes(df, k=14, d=3, sobrevenda=20, sobrecompra=80):
+    pk, pd_ = estocastico(df, k, d)
+    antes_c, cima = _cruza_cima(pk, pd_)
+    antes_p, baixo = _cruza_cima(pd_, pk)
+    c = cor(df)
+    return [
+        _c(
+            f"%K estava abaixo de {sobrevenda} (sobrevenda)",
+            f"%K estava acima de {sobrecompra} (sobrecompra)",
+            pk.shift(1) < sobrevenda,
+            pk.shift(1) > sobrecompra,
+        ),
+        _c("%K cruza para cima da %D", "%K cruza para baixo da %D", antes_c & cima, antes_p & baixo),
+        _c("Vela atual verde (confirmação)", "Vela atual vermelha (confirmação)", c == 1, c == -1),
+    ]
+
+
+def estocastico_reversao(df, k=14, d=3, sobrevenda=20, sobrecompra=80):
+    """Estocástico lento: CALL quando %K sai da sobrevenda cruzando a %D para cima com vela verde; PUT no inverso."""
+    return _de_condicoes(estocastico_reversao_condicoes(df, k, d, sobrevenda, sobrecompra))
+
+
+def supertrend_recuo_condicoes(df, periodo=10, mult=3.0):
+    _, direcao = supertrend(df, periodo, mult)
+    c = cor(df)
+    return [
+        _c(
+            "SuperTrend de alta (nesta vela e na anterior)",
+            "SuperTrend de baixa (nesta vela e na anterior)",
+            (direcao == 1) & (direcao.shift(1) == 1),
+            (direcao == -1) & (direcao.shift(1) == -1),
+        ),
+        _c("Vela anterior vermelha (recuo)", "Vela anterior verde (recuo)", c.shift(1) == -1, c.shift(1) == 1),
+        _c("Vela atual verde (voltou a subir)", "Vela atual vermelha (voltou a cair)", c == 1, c == -1),
+    ]
+
+
+def supertrend_recuo(df, periodo=10, mult=3.0):
+    """SuperTrend + recuo: com o SuperTrend de alta, uma vela vermelha (recuo) seguida de vela verde = CALL;
+    com o SuperTrend de baixa, vela verde seguida de vermelha = PUT."""
+    return _de_condicoes(supertrend_recuo_condicoes(df, periodo, mult))
+
+
+def keltner_reversao_condicoes(df, periodo=20, mult=2.0):
+    sup, _, inf = keltner(df, periodo, mult)
+    f = df["close"]
+    return [
+        _c(
+            "Vela anterior fechou abaixo do canal de Keltner",
+            "Vela anterior fechou acima do canal de Keltner",
+            f.shift(1) < inf.shift(1),
+            f.shift(1) > sup.shift(1),
+        ),
+        _c("Vela atual fecha de volta dentro do canal", None, f >= inf, f <= sup),
+    ]
+
+
+def keltner_reversao(df, periodo=20, mult=2.0):
+    """Keltner reversão: a vela anterior fechou fora do canal (EMA ± mult×ATR) e a atual fechou de volta dentro
+    -> entra na volta (abaixo = CALL, acima = PUT)."""
+    return _de_condicoes(keltner_reversao_condicoes(df, periodo, mult))
+
+
+def keltner_rompimento_condicoes(df, periodo=20, mult=1.5):
+    sup, _, inf = keltner(df, periodo, mult)
+    f = df["close"]
+    return [
+        _c(
+            "Vela anterior fechou dentro do canal (sem rompimento)",
+            None,
+            f.shift(1) <= sup.shift(1),
+            f.shift(1) >= inf.shift(1),
+        ),
+        _c("Fecha acima do canal de Keltner", "Fecha abaixo do canal de Keltner", f > sup, f < inf),
+    ]
+
+
+def keltner_rompimento(df, periodo=20, mult=1.5):
+    """Keltner rompimento: CALL quando o fechamento rompe o canal (EMA ± mult×ATR) para cima; PUT para baixo."""
+    return _de_condicoes(keltner_rompimento_condicoes(df, periodo, mult))
+
+
+def donchian_compressao_condicoes(df, n=20, quantil=0.25, janela=100):
+    sup, _, inf = donchian(df, n, incluir_atual=False)
+    largura = sup - inf
+    estreito = largura <= largura.rolling(int(janela)).quantile(float(quantil))
+    return [
+        _c(f"Canal das {int(n)} velas anteriores mais estreito que o normal", None, estreito, estreito),
+        _c(
+            f"Fecha acima da máxima das {int(n)} velas anteriores",
+            f"Fecha abaixo da mínima das {int(n)} velas anteriores",
+            df["close"] > sup,
+            df["close"] < inf,
+        ),
+    ]
+
+
+def donchian_compressao(df, n=20, quantil=0.25, janela=100):
+    """Donchian após compressão: o canal das N velas anteriores está entre os `quantil` mais estreitos das
+    últimas `janela` velas e o fechamento rompe a máxima (CALL) ou a mínima (PUT)."""
+    return _de_condicoes(donchian_compressao_condicoes(df, n, quantil, janela))
+
+
+def cci_reversao_condicoes(df, periodo=20, nivel=100):
+    v = cci(df, periodo)
+    return [
+        _c(f"CCI estava abaixo de −{nivel}", f"CCI estava acima de +{nivel}", v.shift(1) < -nivel, v.shift(1) > nivel),
+        _c(f"CCI volta para −{nivel} ou mais", f"CCI volta para +{nivel} ou menos", v >= -nivel, v <= nivel),
+    ]
+
+
+def cci_reversao(df, periodo=20, nivel=100):
+    """CCI: CALL quando o CCI volta de baixo de −nivel; PUT quando volta de cima de +nivel."""
+    return _de_condicoes(cci_reversao_condicoes(df, periodo, nivel))
+
+
+def williams_tendencia_condicoes(df, periodo=14, nivel=80, periodo_ma=50):
+    wr = williams_r(df, periodo)
+    ma = sma(df["close"], periodo_ma)
+    alto = -100 + nivel  # ex.: nivel 80 -> sobrecompra acima de −20
+    return [
+        _c(
+            f"Fecha acima da média de {periodo_ma}",
+            f"Fecha abaixo da média de {periodo_ma}",
+            df["close"] > ma,
+            df["close"] < ma,
+        ),
+        _c(
+            f"Williams %R estava abaixo de −{nivel}",
+            f"Williams %R estava acima de {alto}",
+            wr.shift(1) < -nivel,
+            wr.shift(1) > alto,
+        ),
+        _c(
+            f"Williams %R volta para −{nivel} ou mais",
+            f"Williams %R volta para {alto} ou menos",
+            wr >= -nivel,
+            wr <= alto,
+        ),
+    ]
+
+
+def williams_tendencia(df, periodo=14, nivel=80, periodo_ma=50):
+    """Williams %R + tendência: acima da média, CALL quando o %R sai da sobrevenda; abaixo, PUT quando sai da
+    sobrecompra (recuo a favor da tendência)."""
+    return _de_condicoes(williams_tendencia_condicoes(df, periodo, nivel, periodo_ma))
+
+
+# --------------------------------------------------------------------------- #
 # Registro
 # --------------------------------------------------------------------------- #
 def _resumo_doc(f) -> str:
@@ -430,6 +645,78 @@ ESTRATEGIAS = [
         "Rejeição S/R", "REJ", rejeicao_sr, {"n": 20}, condicoes=rejeicao_sr_condicoes, grade={"n": [10, 20, 50]}
     ),
     Estrategia("Engolfo", "ENG", engolfo, condicoes=engolfo_condicoes),
+    Estrategia(
+        "MACD cruzamento",
+        "MACD",
+        macd_cruzamento,
+        {"rapida": 12, "lenta": 26, "sinal": 9},
+        condicoes=macd_cruzamento_condicoes,
+        grade={"rapida": [8, 12], "lenta": [21, 26], "sinal": [5, 9]},
+    ),
+    Estrategia(
+        "MACD + tendência",
+        "MACDT",
+        macd_tendencia,
+        {"periodo": 50, "rapida": 12, "lenta": 26, "sinal": 9},
+        condicoes=macd_tendencia_condicoes,
+        grade={"periodo": [50, 100], "rapida": [8, 12]},
+    ),
+    Estrategia(
+        "Estocástico reversão",
+        "STO",
+        estocastico_reversao,
+        {"k": 14, "d": 3, "sobrevenda": 20, "sobrecompra": 80},
+        condicoes=estocastico_reversao_condicoes,
+        grade={"k": [5, 14], "sobrevenda": [20, 10], "sobrecompra": [80, 90]},
+    ),
+    Estrategia(
+        "SuperTrend + recuo",
+        "ST",
+        supertrend_recuo,
+        {"periodo": 10, "mult": 3.0},
+        condicoes=supertrend_recuo_condicoes,
+        grade={"periodo": [7, 10, 14], "mult": [2.0, 3.0]},
+    ),
+    Estrategia(
+        "Keltner reversão",
+        "KREV",
+        keltner_reversao,
+        {"periodo": 20, "mult": 2.0},
+        condicoes=keltner_reversao_condicoes,
+        grade={"mult": [1.5, 2.0, 2.5]},
+    ),
+    Estrategia(
+        "Keltner rompimento",
+        "KROMP",
+        keltner_rompimento,
+        {"periodo": 20, "mult": 1.5},
+        condicoes=keltner_rompimento_condicoes,
+        grade={"mult": [1.0, 1.5, 2.0]},
+    ),
+    Estrategia(
+        "Donchian após compressão",
+        "DON",
+        donchian_compressao,
+        {"n": 20, "quantil": 0.25, "janela": 100},
+        condicoes=donchian_compressao_condicoes,
+        grade={"n": [10, 20, 50], "quantil": [0.25, 0.5]},
+    ),
+    Estrategia(
+        "CCI reversão",
+        "CCI",
+        cci_reversao,
+        {"periodo": 20, "nivel": 100},
+        condicoes=cci_reversao_condicoes,
+        grade={"periodo": [14, 20], "nivel": [100, 200]},
+    ),
+    Estrategia(
+        "Williams %R + tendência",
+        "WR",
+        williams_tendencia,
+        {"periodo": 14, "nivel": 80, "periodo_ma": 50},
+        condicoes=williams_tendencia_condicoes,
+        grade={"nivel": [80, 90], "periodo_ma": [50, 100]},
+    ),
 ]
 POR_ID = {e.id: e for e in ESTRATEGIAS}
 
@@ -446,6 +733,17 @@ EXPLICACAO = {
     "rompimento_sr": "Segue o preço quando ele rompe a máxima ou a mínima recente.",
     "rejeicao_sr": "Aposta contra quando o preço toca a máxima ou mínima recente e volta.",
     "engolfo": "Segue a vela que 'engole' totalmente a vela anterior de cor oposta.",
+    "macd_cruzamento": "Segue a direção quando o impulso de curto prazo cruza a sua própria média (MACD).",
+    "macd_tendencia": "Igual ao cruzamento do MACD, mas só a favor da tendência dada por uma média longa.",
+    "estocastico_reversao": (
+        "Aposta na volta quando o preço está no fundo (ou no topo) da faixa recente e a vela confirma."
+    ),
+    "supertrend_recuo": "Na tendência do SuperTrend, espera uma vela contra (recuo) e entra quando volta a favor.",
+    "keltner_reversao": "Aposta na volta quando o preço sai do canal normal de oscilação e fecha de volta dentro.",
+    "keltner_rompimento": "Segue o preço quando ele fecha fora do canal normal de oscilação.",
+    "donchian_compressao": "Segue o preço quando ele sai de um período parado, rompendo a máxima ou a mínima recente.",
+    "cci_reversao": "Aposta na volta quando o preço se afasta muito da sua média e começa a retornar (CCI).",
+    "williams_tendencia": "Na tendência, espera um recuo exagerado (Williams %R) terminar e entra a favor.",
 }
 
 

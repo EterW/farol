@@ -478,7 +478,10 @@ function linhaRanking(l, pos, r, lider) {
   const li = el("li", "rk-item" + (l.id === lider ? " lider" : "") + (S.ativas.has(l.id) ? "" : " desligada") + (S.rkAbertos.has(l.id) ? " aberto" : ""));
   const bt = el("button", "rk-linha"); bt.type = "button";
   bt.setAttribute("aria-expanded", String(S.rkAbertos.has(l.id)));
-  const nome = el("span", "rk-nome"); nome.appendChild(el("span", "", l.nome));
+  const nome = el("span", "rk-nome");
+  const ic = el("span", "ic-est"); ic.setAttribute("aria-hidden", "true");
+  ic.style.setProperty("--ic-url", `url("/static/icones/${encodeURIComponent(l.id)}.svg")`);
+  nome.append(ic, el("span", "", l.nome));
   if (l.id === lider) nome.appendChild(el("span", "badge-lider", "LÍDER"));
   const faixa = el("span", "faixa-prob");
   const pc = el("span", "rk-pct" + (st >= 2 ? " cinza" : ""));
@@ -504,6 +507,12 @@ function linhaRanking(l, pos, r, lider) {
   const dl = el("dl");
   const linhas = [stats("Recente", j, r.janela), stats("Histórico", l.historico, r.velas)];
   if (l.forca && l.forca.estado) linhas.push(["Força", l.forca.estado]);
+  if (j && j.p_holm != null) {
+    const nTestes = r.testes || r.linhas.length;
+    linhas.push(["Vários testes", j.vantagem_simples && !j.vantagem
+      ? `A margem de erro fica acima do mínimo, mas não passa na correção para ${nTestes} estratégias testadas ao mesmo tempo (Holm). Pode ser sorte.`
+      : `Correção de Holm para ${nTestes} estratégias testadas ao mesmo tempo: ${j.vantagem ? "passa" : "não se aplica (sem vantagem)"}.`]);
+  }
   for (const [dt, dd] of linhas) dl.append(el("dt", "", dt), el("dd", "", dd));
   mais.appendChild(dl);
   bt.addEventListener("click", () => {

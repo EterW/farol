@@ -39,8 +39,8 @@ def farol_com_deriv_falso():
     """Deriv falso (thread com loop próprio) + servidor do Farol (uvicorn em thread)."""
     import uvicorn
 
-    from binarias import sessao as sessmod
     from binarias import servidor
+    from binarias import sessao as sessmod
 
     pronto, fim = threading.Event(), None
     caixa: dict = {}

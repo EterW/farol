@@ -2,7 +2,10 @@
 
 Regra de "melhor do momento" (todas as condições, na JANELA recente):
   * pelo menos `min_ops` operações decididas (WIN + LOSS), e
-  * limite inferior do IC de Wilson (95%) do acerto ACIMA do acerto de break-even do payout.
+  * limite inferior do IC de Wilson (95%) do acerto ACIMA do acerto de break-even do payout, e
+  * correção de testes múltiplos: como TODAS as estratégias são testadas na mesma janela, o p-valor
+    binomial (H0: acerto <= break-even) de cada uma é ajustado por Holm entre todas as testadas e precisa
+    ficar abaixo de 2,5% (o mesmo nível unilateral do IC). Mais estratégias = exigência maior.
 Se nenhuma passar: "sem vantagem comprovada" — não apontamos vencedora.
 
 Ordem da lista (nunca pelo percentual bruto, que engana com poucas operações):
@@ -27,7 +30,7 @@ from .config import (
     TAXA_MAX_PREPARO,
     Z_FORCA,
 )
-from .estatistica import break_even, wilson, z_duas_proporcoes
+from .estatistica import ALFA_UNILATERAL, ajustar_p, break_even, p_valor_acima, wilson, z_duas_proporcoes
 from .estrategias import ESTRATEGIAS, ultimo_valor
 from .log import obter
 
@@ -101,7 +104,7 @@ def selo(janela: dict | None, forca: dict | None, min_ops: int = MIN_OPERACOES) 
 
 
 def preparo_informativo(taxa: float | None) -> bool:
-    """"Se formando" só é informação quando o sinal é raro. Uma estratégia que dá sinal em quase toda vela
+    """ "Se formando" só é informação quando o sinal é raro. Uma estratégia que dá sinal em quase toda vela
     (ex.: Seguir cor, ~97% das velas) estaria "se formando 100%" o tempo todo: isso não diz nada."""
     return taxa is not None and taxa <= TAXA_MAX_PREPARO
 
@@ -120,6 +123,25 @@ def chave_ordem(linha: dict) -> tuple:
     """Status, depois limite inferior do IC (maior primeiro), depois mais operações, depois o nome."""
     j = linha.get("janela") or {}
     return (status(linha), -(j.get("ic_inf") or 0.0), -(j.get("decididas") or 0), linha.get("nome", ""))
+
+
+def corrigir_multiplos(linhas: list[dict], be: float, min_ops: int) -> None:
+    """Ajusta (no lugar) a vantagem de cada linha pela correção de Holm entre TODAS as estratégias testadas.
+    A vantagem só continua valendo se a regra simples (≥ min_ops e IC acima do break-even) E o p-valor
+    ajustado < ALFA_UNILATERAL valerem. Estratégias com erro contam como testes (p = 1): conservador."""
+    pvals = []
+    for l in linhas:
+        j = l.get("janela") or {}
+        pvals.append(p_valor_acima(j.get("wins") or 0, j.get("decididas") or 0, be))
+    ajustados = ajustar_p(pvals, "holm")
+    for l, p, p_aj in zip(linhas, pvals, ajustados, strict=True):
+        j = l.get("janela")
+        if not j:
+            continue
+        j["p_valor"], j["p_holm"] = p, p_aj
+        j["vantagem_simples"] = j["vantagem"]
+        j["vantagem"] = bool(j["vantagem"] and p_aj < ALFA_UNILATERAL)
+        l["selo"] = selo(j, l.get("forca"), min_ops)
 
 
 def calcular_ranking(
@@ -193,6 +215,7 @@ def calcular_ranking(
         )
     if ao_progresso:
         ao_progresso(len(estrategias), len(estrategias), "")
+    corrigir_multiplos(linhas, be, min_ops)
 
     linhas.sort(key=chave_ordem)
     melhor = next(
@@ -218,10 +241,13 @@ def calcular_ranking(
             "Ordem: vantagem comprovada primeiro; depois pelo pior caso plausível (limite inferior da "
             "margem de erro), nunca pelo percentual bruto; empate: mais operações primeiro."
         ),
+        "testes": len(estrategias),
+        "correcao": "Holm",
         "criterio": (
             f"Melhor do momento só se, nas últimas {min(janela, len(df))} velas, tiver ≥ {min_ops} "
             f"operações E o limite inferior do IC de Wilson {CONFIANCA:.0%} do acerto ficar acima do "
-            f"break-even de {be:.2%} (payout {cfg.payout:.0%}). Sem gale."
+            f"break-even de {be:.2%} (payout {cfg.payout:.0%}) E passar na correção de Holm para "
+            f"{len(estrategias)} estratégias testadas ao mesmo tempo. Sem gale."
         ),
     }
 
