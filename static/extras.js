@@ -279,10 +279,67 @@ function iniciarBanca() {
   atualizarBanca();
 }
 
+// ================================================================== modo educativo (glossário e silêncio)
+const G = { termos: [], silencio: [], passo: 0, carregado: false };
+function semAcento(t) { return t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+function desenharGlossario() {
+  const filtro = semAcento($("inpGlossario").value.trim());
+  const caixa = $("listaGlossario"); caixa.replaceChildren();
+  const lista = G.termos.filter((t) => !filtro || semAcento(`${t.termo} ${t.texto}`).includes(filtro));
+  if (!lista.length) caixa.appendChild(el("p", "vazio-txt", "Nenhum termo encontrado."));
+  for (const t of lista) {
+    const d = el("details", "g-termo");
+    d.append(el("summary", "", t.termo), el("p", "", t.texto), el("p", "g-exemplo", `Exemplo: ${t.exemplo}`));
+    if (filtro && lista.length <= 3) d.open = true;
+    caixa.appendChild(d);
+  }
+}
+function desenharSilencio() {
+  const s = G.silencio[G.passo];
+  if (!s) return;
+  $("tsPasso").textContent = `${G.passo + 1} de ${G.silencio.length}`;
+  $("tsTitulo").textContent = s.titulo;
+  $("tsTexto").textContent = s.texto;
+  const pontos = $("tsPontos"); pontos.replaceChildren();
+  G.silencio.forEach((_, i) => pontos.appendChild(el("i", i === G.passo ? "on" : "")));
+  $("tsAnterior").disabled = G.passo === 0;
+  $("tsProximo").textContent = G.passo === G.silencio.length - 1 ? "Recomeçar" : "Próximo";
+}
+function abaAprender(qual) {
+  const glos = qual === "glossario";
+  $("abaGlossario").classList.toggle("on", glos); $("abaGlossario").setAttribute("aria-selected", String(glos));
+  $("abaSilencio").classList.toggle("on", !glos); $("abaSilencio").setAttribute("aria-selected", String(!glos));
+  $("painelGlossario").hidden = !glos; $("painelSilencio").hidden = glos;
+}
+async function abrirAprender(qual = "glossario") {
+  abaAprender(qual);
+  $("dlgAprender").showModal();
+  if (G.carregado) return;
+  try {
+    const r = await (await fetch("/api/glossario")).json();
+    G.termos = r.termos; G.silencio = r.silencio; G.carregado = true;
+    desenharGlossario(); desenharSilencio();
+  } catch {
+    $("listaGlossario").replaceChildren(el("p", "vazio-txt", "Não foi possível carregar o glossário."));
+  }
+}
+function iniciarAprender() {
+  $("btnAprender").addEventListener("click", () => abrirAprender("glossario"));
+  $("abaGlossario").addEventListener("click", () => abaAprender("glossario"));
+  $("abaSilencio").addEventListener("click", () => abaAprender("silencio"));
+  $("inpGlossario").addEventListener("input", desenharGlossario);
+  $("tsAnterior").addEventListener("click", () => { G.passo = Math.max(0, G.passo - 1); desenharSilencio(); });
+  $("tsProximo").addEventListener("click", () => { G.passo = (G.passo + 1) % G.silencio.length; desenharSilencio(); });
+  // atalhos: /?aprender=glossario ou /?aprender=silencio (usado pelos screenshots)
+  const q = new URLSearchParams(location.search).get("aprender");
+  if (q) setTimeout(() => abrirAprender(q === "silencio" ? "silencio" : "glossario"), 300);
+}
+
 // ================================================================== início
 function iniciar() {
   if ($("cartaoAssistente")) iniciarAssistente();
   if ($("cartaoBanca")) iniciarBanca();
+  if ($("dlgAprender")) iniciarAprender();
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", iniciar);
 else iniciar();

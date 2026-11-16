@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Como o Farol decide</title>
+<link rel="icon" href="/static/marca/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/tema.css">
+<style>
+  body { margin: 0; background: var(--fundo); color: var(--texto); font-family: var(--fonte-texto); line-height: 1.55; }
+  .pagina { max-width: 1180px; margin: 0 auto; padding: 28px 16px 40px; }
+  .topo { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .topo a { color: var(--marca-clara); font-size: var(--fs-pequeno); }
+  .marca { display: flex; align-items: center; gap: 10px; font-family: var(--fonte-titulo); font-weight: 650; font-size: var(--fs-destaque); color: var(--texto); text-decoration: none; }
+  .marca img { width: 28px; height: 28px; }
+  h1 { font-family: var(--fonte-titulo); font-size: clamp(1.6rem, 3.2vw, 2.4rem); margin: 18px 0 8px; letter-spacing: -.01em; }
+  .intro { max-width: 760px; color: var(--texto-2); margin: 0 0 26px; }
+  .fluxo { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; counter-reset: passo; }
+  .passo { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 18px 16px; border-radius: var(--raio); background: var(--superficie); border: 1px solid var(--linha); counter-increment: passo; }
+  .passo::before { content: counter(passo); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--marca-suave); color: var(--marca-clara); font-family: var(--fonte-numero); font-weight: 600; font-size: var(--fs-pequeno); }
+  .passo:not(:last-child)::after { content: "→"; position: absolute; right: -16px; top: 50%; transform: translateY(-50%); color: var(--marca); font-size: 1.1rem; }
+  .passo h2 { margin: 0; font-family: var(--fonte-titulo); font-size: var(--fs-h2); }
+  .passo p { margin: 0; font-size: var(--fs-pequeno); color: var(--texto-2); }
+  .passo .num { color: var(--texto); font-family: var(--fonte-numero); }
+  .passo.final { border-color: var(--marca); background: linear-gradient(160deg, var(--superficie-2), var(--superficie)); }
+  .filtro { margin-top: auto; padding-top: 8px; border-top: 1px dashed var(--linha-forte); font-size: var(--fs-legenda) !important; color: var(--texto-3) !important; }
+  .blocos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 28px; }
+  .bloco { padding: 18px 20px; border-radius: var(--raio); background: var(--superficie); border: 1px solid var(--linha); }
+  .bloco h2 { margin: 0 0 8px; font-family: var(--fonte-titulo); font-size: var(--fs-h2); }
+  .bloco ul { margin: 0; padding-left: 18px; color: var(--texto-2); font-size: var(--fs-pequeno); }
+  .bloco li { margin: 4px 0; }
+  .risco { margin-top: 28px; padding: 14px 16px; border-radius: 14px; background: var(--superficie-2); border-left: 3px solid var(--conf); font-size: var(--fs-pequeno); color: var(--texto-2); }
+  .risco b { color: var(--texto); }
+  @media (max-width: 960px) {
+    .fluxo { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+    .passo:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -22px; transform: translateX(-50%); }
+    .blocos { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <div class="topo">
+    <a class="marca" href="/"><img src="/static/marca/simbolo.svg" alt="" width="28" height="28">Farol</a>
+    <a href="/">← Voltar ao modo ao vivo</a>
+  </div>
+  <h1>Como o Farol decide</h1>
+  <p class="intro">O Farol não adivinha o preço. Ele mede, com o histórico, se alguma estratégia acertou mais do que o
+    necessário para não perder dinheiro, e só fala quando os números aguentam a margem de erro. Na maior parte do tempo,
+    a resposta honesta é “sem vantagem comprovada”, e o Farol fica em silêncio.</p>
+
+  <ol class="fluxo" aria-label="Fluxo de decisão do Farol">
+    <li class="passo">
+      <h2>Dados</h2>
+      <p>Velas públicas da Deriv (abertura, máxima, mínima e fechamento). Só velas <b>fechadas</b> entram na conta.</p>
+      <p>Histórico de <span class="num" data-k="n_historico">3000</span> velas por ativo.</p>
+      <p class="filtro">Sem volume na fonte: indicadores que dependem de volume (como o VWAP) ficam de fora.</p>
+    </li>
+    <li class="passo">
+      <h2>Estratégias</h2>
+      <p><span class="num" data-k="n_estrategias">20</span> estratégias, cada uma com condições claras (ex.: RSI, MACD,
+        SuperTrend). Todas usam só velas até a atual: nunca o futuro.</p>
+      <p class="filtro">Há teste automático que corta o futuro e confere que o sinal não muda.</p>
+    </li>
+    <li class="passo">
+      <h2>Ranking com margem de erro</h2>
+      <p>Cada estratégia é simulada nas últimas <span class="num" data-k="janela">1500</span> velas. A ordem usa o
+        <b>pior caso plausível</b> (limite inferior do intervalo de Wilson 95%), nunca o percentual bruto.</p>
+      <p class="filtro">Break-even com payout <span class="num" data-k="payout">85%</span>:
+        <span class="num" data-k="be">54,05%</span> de acerto.</p>
+    </li>
+    <li class="passo">
+      <h2>Validação</h2>
+      <p>Vantagem comprovada só com <span class="num" data-k="min_ops">100</span> operações ou mais, margem de erro
+        inteira acima do break-even e correção de Holm para muitas estratégias testadas ao mesmo tempo.</p>
+      <p class="filtro">Fora do ao vivo, <code>python validar.py</code> faz o walk-forward: escolhe no passado, mede em
+        dados nunca vistos.</p>
+    </li>
+    <li class="passo final">
+      <h2>Sinal (ou silêncio)</h2>
+      <p>Só a <b>estratégia líder</b> comprovada pode gerar “ENTRAR AGORA”, quando todas as condições dela fecham na
+        vela. Conflito com outra relevante bloqueia a entrada.</p>
+      <p class="filtro">A IA do assistente só explica: ela não participa de nenhuma etapa desta decisão.</p>
+    </li>
+  </ol>
+
+  <div class="blocos">
+    <section class="bloco">
+      <h2>Por que o Farol fica em silêncio</h2>
+      <ul>
+        <li>Menos de <span class="num" data-k="min_ops">100</span> operações na janela: a sorte pesa demais.</li>
+        <li>A margem de erro encosta no break-even: pode não haver vantagem real.</li>
+        <li>Passou “por pouco” entre muitas estratégias: a correção de Holm descarta.</li>
+        <li>A líder ainda não cumpriu todas as condições nesta vela.</li>
+        <li>Conflito: outra estratégia relevante aponta o lado oposto.</li>
+        <li>Você atingiu o limite do dia em “Minha banca”.</li>
+      </ul>
+    </section>
+    <section class="bloco">
+      <h2>O que o Farol não faz</h2>
+      <ul>
+        <li>Não promete lucro nem taxa de acerto: toda probabilidade é <b>estimada</b> do passado, com faixa de erro.</li>
+        <li>Não usa martingale nem “gale”: isso esconde o risco e quebra a conta do break-even.</li>
+        <li>Não deixa a IA decidir sinal ou prever preço.</li>
+        <li>Não modela atraso de execução nem diferença de preço na corretora.</li>
+      </ul>
+    </section>
+  </div>
+
+  <p class="risco" role="note"><b>Ferramenta de estudo.</b> Nenhum sinal é garantia. Opções binárias podem causar perda
+    total do valor investido. Na última validação do laboratório, nenhuma estratégia passou.</p>
+</div>
+<script>
+(() => {
+  "use strict";
+  const pct = (v, casas) => `${(100 * v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}%`;
+  fetch("/api/config").then((r) => r.json()).then((c) => {
+    const valores = {
+      n_historico: c.n_historico, n_estrategias: c.estrategias.length, janela: c.janela, min_ops: c.min_ops,
+      payout: pct(c.payout, 0), be: pct(1 / (1 + c.payout), 2),
+    };
+    for (const e of document.querySelectorAll("[data-k]")) {
+      const v = valores[e.dataset.k];
+      if (v !== undefined && v !== null) e.textContent = typeof v === "number" ? v.toLocaleString("pt-BR") : v;
+    }
+  }).catch(() => { /* sem servidor: ficam os valores padrão do texto */ });
+})();
+</script>
+</body>
+</html>

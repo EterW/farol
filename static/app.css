@@ -657,3 +657,20 @@ input[type=range] { accent-color: var(--marca); width: 100%; min-height: 28px; }
   .banca-campos { grid-template-columns: minmax(0, 1fr); }
   .banca-registro .campo.valor { max-width: none; }
 }
+
+/* ------------------------------------------------------------------ modo educativo */
+.dialogo-largo { max-width: min(720px, calc(100vw - 32px)); }
+.abas-aprender { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.abas-aprender button { white-space: normal; text-align: center; }
+.glossario { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.g-termo { border: 1px solid var(--linha); border-radius: 12px; background: var(--superficie); padding: 0 14px; }
+.g-termo summary { cursor: pointer; padding: 11px 0; font-weight: 600; font-size: var(--fs-texto); }
+.g-termo p { margin: 0 0 10px; font-size: var(--fs-pequeno); line-height: 1.5; color: var(--texto-2); }
+.g-termo .g-exemplo { color: var(--texto); border-left: 3px solid var(--marca); padding-left: 10px; }
+.tour-silencio { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 14px; background: var(--superficie); min-height: 230px; }
+.tour-silencio h3 { margin: 0; font-family: var(--fonte-titulo); font-size: var(--fs-h2); }
+.tour-silencio p { margin: 0; line-height: 1.55; }
+.ts-passo { font-size: var(--fs-legenda); color: var(--texto-3); }
+.ts-pontos { display: flex; gap: 6px; margin-top: auto; }
+.ts-pontos i { width: 8px; height: 8px; border-radius: 50%; background: var(--superficie-3); }
+.ts-pontos i.on { background: var(--marca); }

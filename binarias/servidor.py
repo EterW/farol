@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import assistente, avisos, demo, mercado, progresso, risco, scanner
+from . import assistente, avisos, demo, glossario, mercado, progresso, risco, scanner
 from .config import (
     ATIVOS_SCANNER,
     EXPIRACAO_MAX,
@@ -91,6 +91,18 @@ app.mount("/static", StaticFiles(directory=PASTA_STATIC), name="static")
 async def pagina():
     """Página principal."""
     return FileResponse(os.path.join(PASTA_STATIC, "index.html"))
+
+
+@app.get("/como-decide")
+async def pagina_como_decide():
+    """Página educativa: o fluxo dados -> estratégias -> ranking com margem de erro -> validação -> sinal."""
+    return FileResponse(os.path.join(PASTA_STATIC, "como-decide.html"))
+
+
+@app.get("/api/glossario")
+async def api_glossario():
+    """Glossário curto e o mini-tour 'Por que o Farol fica em silêncio'."""
+    return {"termos": glossario.GLOSSARIO, "silencio": glossario.SILENCIO}
 
 
 @app.get("/favicon.ico", include_in_schema=False)
