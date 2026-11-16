@@ -251,7 +251,7 @@ async def api_risco_simular(req: Request):
         c = await _corpo(req)
         return await asyncio.to_thread(
             risco.simular,
-            c.get("acerto"),
+            c.get("acerto", -1),
             c.get("payout", PAYOUT_PADRAO),
             c.get("pct", 1),
             c.get("n_operacoes", 100),

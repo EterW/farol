@@ -97,6 +97,40 @@ def main():
                 problemas.append(f"[{nome}] letra G: rolagem horizontal")
             pg.screenshot(path=os.path.join(args.pasta, f"letra_grande_{nome}.png"))
             pg.click(".grupo-letra button[data-letra='m']")
+            # cartões novos: assistente, "Minha banca" (simulador, diário, bloqueio do dia), Aprender, Como decide
+            pg.goto(f"{args.url}/?demo=entrar&tour=0", wait_until="networkidle")
+            pg.wait_for_timeout(700)
+            pg.click("#btnExplicar")
+            pg.wait_for_timeout(300)
+            pg.locator("#cartaoAssistente").screenshot(path=os.path.join(args.pasta, f"assistente_{nome}.png"))
+            pg.click("#bcSimulador summary")
+            pg.click("#btnSimular")
+            pg.wait_for_timeout(1200)
+            pg.locator("#cartaoBanca").screenshot(path=os.path.join(args.pasta, f"banca_simulador_{nome}.png"))
+            for _ in range(3):
+                pg.click("#cartaoBanca [data-res=LOSS]")
+                pg.wait_for_timeout(400)
+            pg.click("#bcDiario summary")
+            pg.wait_for_timeout(300)
+            if pg.evaluate("document.getElementById('faixaBloqueio').hidden"):
+                problemas.append(f"[{nome}] 3 losses seguidos e a faixa 'Limite do dia atingido' não apareceu")
+            pg.locator("#cartaoBanca").screenshot(path=os.path.join(args.pasta, f"banca_bloqueada_{nome}.png"))
+            pg.evaluate("scrollTo(0, 0)")
+            pg.wait_for_timeout(300)
+            pg.screenshot(path=os.path.join(args.pasta, f"faixa_bloqueio_{nome}.png"))
+            for ruim in pg.evaluate(JS_FONTES, MENOR_FONTE):
+                problemas.append(f"[{nome}] cartões novos: texto pequeno {ruim}")
+            for qual in ("glossario", "silencio"):
+                pg.goto(f"{args.url}/?demo=aguardar&tour=0&aprender={qual}", wait_until="networkidle")
+                pg.wait_for_timeout(800)
+                pg.screenshot(path=os.path.join(args.pasta, f"aprender_{qual}_{nome}.png"))
+            pg.goto(f"{args.url}/como-decide", wait_until="networkidle")
+            pg.wait_for_timeout(500)
+            if pg.evaluate("document.documentElement.scrollWidth") > w:
+                problemas.append(f"[{nome}] como-decide: rolagem horizontal")
+            for ruim in pg.evaluate(JS_FONTES, MENOR_FONTE):
+                problemas.append(f"[{nome}] como-decide: texto pequeno {ruim}")
+            pg.screenshot(path=os.path.join(args.pasta, f"como_decide_{nome}.png"), full_page=True)
             ctx.close()
             # tour de primeira visita (contexto limpo) e diálogo de alertas
             ctx = nav.new_context(

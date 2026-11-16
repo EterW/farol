@@ -90,7 +90,7 @@ def estado_dia(
     meta = None if meta_pct in (None, "", 0) else _num(meta_pct, "meta do dia", 0, 1000)
     resultado, seguidos, wins, losses, empates = 0.0, 0, 0, 0, 0
     for op in operacoes or []:
-        lucro = resultado_operacao(op.get("resultado"), op.get("valor", 0), op.get("payout", 0))
+        lucro = resultado_operacao(str(op.get("resultado")), op.get("valor", 0), op.get("payout", 0))
         resultado += lucro
         r = str(op.get("resultado")).upper()
         if r == "LOSS":

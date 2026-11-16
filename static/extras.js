@@ -167,6 +167,7 @@ function aplicarBloqueio(ligado, motivo) {
   const m = ligado ? (motivo.match(/\((.*)\)/) || [])[1] : "";
   $("faixaBloqueioMotivo").textContent = m ? `Motivo: ${m}.` : "";
   $("cartaoBanca").classList.toggle("bloqueado", ligado);
+  document.body.classList.toggle("dia-bloqueado", ligado);
   for (const b of document.querySelectorAll("#cartaoBanca [data-res]")) b.disabled = ligado;
   ponte().bloqueioDia(ligado);
 }

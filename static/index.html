@@ -210,61 +210,7 @@
         </footer>
       </section>
 
-      <section class="cartao mercado so-detalhado" id="cartaoMercado" aria-labelledby="tMercado">
-        <header class="cartao-topo"><h2 id="tMercado">Mercado em palavras simples</h2><small id="mAtivo"></small></header>
-        <div class="m-cartoes">
-          <div class="m-cartao" id="mTend">
-            <span class="m-rotulo">Tendência</span>
-            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-lado"/></svg><b>—</b></span>
-            <span class="medidor" data-n="0" aria-hidden="true"><i></i><i></i><i></i></span>
-            <small class="m-extra">força —</small>
-          </div>
-          <div class="m-cartao" id="mMov">
-            <span class="m-rotulo">Movimento</span>
-            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-onda"/></svg><b>—</b></span>
-            <span class="medidor" data-n="0" aria-hidden="true"><i></i><i></i><i></i></span>
-            <small class="m-extra">&nbsp;</small>
-          </div>
-          <div class="m-cartao" id="mVela">
-            <span class="m-rotulo">Vela atual</span>
-            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-vela"/></svg><b>—</b></span>
-            <small class="m-extra">&nbsp;</small>
-          </div>
-        </div>
-        <h3 class="m-titulo">O que está acontecendo</h3>
-        <p class="m-frase" id="mFrase">—</p>
-        <details class="detalhes">
-          <summary>Ver os números por trás (resumo técnico)</summary>
-          <div class="tecnico" id="mTecnico"></div>
-          <p class="sub" id="mCriterio"></p>
-          <h3 class="m-titulo">Todos os ativos varridos</h3>
-          <div class="tabela-rolagem"><table class="tabela" id="topTodos"></table></div>
-        </details>
-      </section>
-
-      <section class="cartao sessao-hist so-detalhado" id="cartaoSessao" aria-labelledby="tSessao">
-        <header class="cartao-topo">
-          <h2 id="tSessao">Operações desta sessão</h2>
-          <div class="segmentado abas-ops" role="tablist" aria-label="Quais operações mostrar">
-            <button type="button" role="tab" id="opsAbaAtivo" class="on" aria-selected="true" aria-controls="listaOps">Este ativo</button>
-            <button type="button" role="tab" id="opsAbaTodas" aria-selected="false" aria-controls="listaOps">Todas</button>
-          </div>
-        </header>
-        <p class="placar numero" id="placar"></p>
-        <ol class="lista-ops" id="listaOps" role="tabpanel"><li class="vazio-txt">Nenhuma operação ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado.</li></ol>
-        <p class="sub">★ e contorno = entrada avisada pelo Farol (ENTRAR AGORA). Ao trocar de ativo ou tempo, as operações em aberto ficam como “cancelada”. Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
-      </section>
-    </div>
-
-    <aside class="col-lateral">
-      <section class="cartao top" id="cartaoTop" data-tour="top" aria-labelledby="tTop">
-        <header class="cartao-topo">
-          <h2 id="tTop">Top 3 ativos agora <button type="button" class="q" id="qTop" aria-label="Como a nota é calculada" data-dica="">?</button></h2>
-          <small id="topInfo"></small>
-        </header>
-        <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
-      </section>
-
+      <div class="linha-extras">
       <section class="cartao banca" id="cartaoBanca" aria-labelledby="tBanca">
         <header class="cartao-topo">
           <h2 id="tBanca">Minha banca</h2>
@@ -347,6 +293,62 @@
           <p class="assist-aviso" id="assistAviso"></p>
         </div>
         <p class="assist-privacidade" id="assistPrivacidade"><svg class="ic" aria-hidden="true"><use href="#i-alerta"/></svg><span>Envio externo: com a IA ligada, os números já calculados pelo Farol (ativo, tendência, veredito, probabilidade estimada, break-even) e a sua pergunta vão para a API da Anthropic. Dados da banca e do diário nunca são enviados.</span></p>
+      </section>
+      </div>
+
+      <section class="cartao mercado so-detalhado" id="cartaoMercado" aria-labelledby="tMercado">
+        <header class="cartao-topo"><h2 id="tMercado">Mercado em palavras simples</h2><small id="mAtivo"></small></header>
+        <div class="m-cartoes">
+          <div class="m-cartao" id="mTend">
+            <span class="m-rotulo">Tendência</span>
+            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-lado"/></svg><b>—</b></span>
+            <span class="medidor" data-n="0" aria-hidden="true"><i></i><i></i><i></i></span>
+            <small class="m-extra">força —</small>
+          </div>
+          <div class="m-cartao" id="mMov">
+            <span class="m-rotulo">Movimento</span>
+            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-onda"/></svg><b>—</b></span>
+            <span class="medidor" data-n="0" aria-hidden="true"><i></i><i></i><i></i></span>
+            <small class="m-extra">&nbsp;</small>
+          </div>
+          <div class="m-cartao" id="mVela">
+            <span class="m-rotulo">Vela atual</span>
+            <span class="m-valor"><svg class="ic" aria-hidden="true"><use href="#i-vela"/></svg><b>—</b></span>
+            <small class="m-extra">&nbsp;</small>
+          </div>
+        </div>
+        <h3 class="m-titulo">O que está acontecendo</h3>
+        <p class="m-frase" id="mFrase">—</p>
+        <details class="detalhes">
+          <summary>Ver os números por trás (resumo técnico)</summary>
+          <div class="tecnico" id="mTecnico"></div>
+          <p class="sub" id="mCriterio"></p>
+          <h3 class="m-titulo">Todos os ativos varridos</h3>
+          <div class="tabela-rolagem"><table class="tabela" id="topTodos"></table></div>
+        </details>
+      </section>
+
+      <section class="cartao sessao-hist so-detalhado" id="cartaoSessao" aria-labelledby="tSessao">
+        <header class="cartao-topo">
+          <h2 id="tSessao">Operações desta sessão</h2>
+          <div class="segmentado abas-ops" role="tablist" aria-label="Quais operações mostrar">
+            <button type="button" role="tab" id="opsAbaAtivo" class="on" aria-selected="true" aria-controls="listaOps">Este ativo</button>
+            <button type="button" role="tab" id="opsAbaTodas" aria-selected="false" aria-controls="listaOps">Todas</button>
+          </div>
+        </header>
+        <p class="placar numero" id="placar"></p>
+        <ol class="lista-ops" id="listaOps" role="tabpanel"><li class="vazio-txt">Nenhuma operação ainda. Cada sinal das estratégias marcadas aparece aqui com o resultado.</li></ol>
+        <p class="sub">★ e contorno = entrada avisada pelo Farol (ENTRAR AGORA). Ao trocar de ativo ou tempo, as operações em aberto ficam como “cancelada”. Registro completo em <code>resultados/sinais_ao_vivo.csv</code>.</p>
+      </section>
+    </div>
+
+    <aside class="col-lateral">
+      <section class="cartao top" id="cartaoTop" data-tour="top" aria-labelledby="tTop">
+        <header class="cartao-topo">
+          <h2 id="tTop">Top 3 ativos agora <button type="button" class="q" id="qTop" aria-label="Como a nota é calculada" data-dica="">?</button></h2>
+          <small id="topInfo"></small>
+        </header>
+        <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
       </section>
 
       <section class="cartao ranking so-detalhado" id="cartaoRanking" aria-labelledby="tRanking">

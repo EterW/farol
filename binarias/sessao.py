@@ -377,8 +377,16 @@ class Sessao:
 
     def _calcular(self, df: pd.DataFrame, formando: pd.DataFrame, ativas: set, ao_progresso=None) -> tuple[dict, dict]:
         cfg = self.cfg
-        chave = (self.simbolo, self.tf, int(df["epoch"].iat[-1]), len(df), cfg.expiracao, cfg.payout, cfg.empate)
-        chave += (frozenset(ativas),)
+        chave = (
+            self.simbolo,
+            self.tf,
+            int(df["epoch"].iat[-1]),
+            len(df),
+            cfg.expiracao,
+            cfg.payout,
+            cfg.empate,
+            frozenset(ativas),
+        )
         r = _ranking_em_cache(
             chave,
             lambda: calcular_ranking(

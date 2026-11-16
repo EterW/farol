@@ -674,3 +674,9 @@ input[type=range] { accent-color: var(--marca); width: 100%; min-height: 28px; }
 .ts-pontos { display: flex; gap: 6px; margin-top: auto; }
 .ts-pontos i { width: 8px; height: 8px; border-radius: 50%; background: var(--superficie-3); }
 .ts-pontos i.on { background: var(--marca); }
+
+/* banca + assistente lado a lado embaixo do gráfico (empilham em telas estreitas) */
+.linha-extras { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+@media (max-width: 1280px) { .linha-extras { grid-template-columns: minmax(0, 1fr); } }
+/* limite do dia atingido: o veredito fica apagado (a faixa no topo explica o porquê) */
+.dia-bloqueado .veredito { filter: grayscale(.85); opacity: .55; }
