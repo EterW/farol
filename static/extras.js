@@ -22,7 +22,7 @@ const FONTE = {
   ia: "Explicação da IA (conferida pelo Farol)",
   desativado: "Explicação automática do Farol (sem IA)",
   descartada: "Explicação automática do Farol (a resposta da IA foi descartada)",
-  erro: "Explicação automática do Farol (assistente indisponível)",
+  erro: "Explicação automática do Farol (o assistente não respondeu)",
   limite: "Explicação automática do Farol (limite de chamadas atingido)",
   recusa: "Resposta padrão do Farol",
   sem_dados: "Farol",
@@ -31,8 +31,12 @@ function aplicarStatusAssistente(st) {
   if (!st) return;
   A.status = st;
   $("assistDesligado").hidden = !!st.ativo;
-  $("assistStatus").textContent = st.ativo ? `IA ligada · ${st.restantes}/${st.limite_hora} por hora` : "IA desligada";
+  if (!st.ativo && st.texto_desativado) $("assistDesligadoTxt").textContent = st.texto_desativado;
+  const nome = st.provedor === "ollama" ? (st.local ? "IA local (Ollama)" : "IA Ollama remota") : "IA Anthropic";
+  $("assistStatus").textContent = st.ativo ? `${nome} · ${st.restantes}/${st.limite_hora} por hora` : "IA desligada";
   $("assistStatus").title = st.ativo ? `Modelo: ${st.modelo}` : st.texto_desativado;
+  if (st.privacidade) $("assistPrivacidadeTxt").textContent = st.privacidade;
+  $("assistPrivacidade").classList.toggle("externo", !!st.ativo && !st.local);
 }
 function pedirExplicacao(pergunta = "") {
   if (A.esperando) return;
@@ -53,7 +57,7 @@ function pedirExplicacao(pergunta = "") {
     if (!A.esperando) return;
     terminar();
     mostrarResposta({ fonte: "erro", texto: "O assistente não respondeu a tempo. Tente de novo em instantes.", aviso: "" });
-  }, 45000);
+  }, 1000 * ((A.status && A.status.tempo_limite) || 60) + 15000);   // acompanha o tempo limite do provedor
 }
 function terminar() {
   A.esperando = false;

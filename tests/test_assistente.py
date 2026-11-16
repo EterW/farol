@@ -24,7 +24,7 @@ class ClienteFalso:
 
 
 def _cfg(chave="sk-teste", **kw):
-    return A.Configuracao(chave=chave, **kw)
+    return A.Configuracao(provedor="anthropic", chave=chave, **kw)
 
 
 def _dados(comprovada=False):
@@ -103,9 +103,17 @@ def test_sem_chave_nao_quebra_e_nao_chama():
     ass = A.Assistente(_cfg(chave=None), cli)
     r = ass.explicar(_dados(), CHAVE)
     assert r["fonte"] == "desativado" and not cli.chamadas
-    assert "Ative o assistente nas configurações" in r["motivo"]
+    assert "ANTHROPIC_API_KEY" in r["motivo"]
     st = ass.status()
     assert st["ativo"] is False and "sk-" not in str(st)
+
+
+def test_padrao_e_desligado():
+    cfg = A.Configuracao()
+    assert cfg.provedor == "desligado" and not cfg.ativo
+    r = A.Assistente(cfg, ClienteFalso(BOM)).explicar(_dados(), CHAVE)
+    assert r["fonte"] == "desativado" and "Ative o assistente nas configurações" in r["motivo"]
+    assert A.Configuracao(provedor="outra-coisa").provedor == "desligado"
 
 
 def test_falha_de_rede_nao_trava():

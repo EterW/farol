@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 — 2026-11-16
+
+### Adicionado
+- Assistente com **provedor configurável** no `.env`: `ASSISTENTE_PROVEDOR=desligado | ollama | anthropic`
+  (padrão `desligado`). Ollama local em `http://127.0.0.1:11434`, modelo em `ASSISTENTE_MODELO`, tempo limite 60 s.
+- Mensagens claras quando o Ollama não está rodando (comando de instalação) ou o modelo não existe
+  (`ollama pull <modelo>`), sem travar a tela.
+- Testes contra um servidor Ollama simulado (HTTP real numa porta livre).
+
+### Alterado
+- **Só ter `ANTHROPIC_API_KEY` não liga mais o assistente**: é preciso `ASSISTENTE_PROVEDOR=anthropic`.
+- Aviso de privacidade e status do cartão mudam conforme o provedor (local × externo).
+
 ## 1.1.0 — 2026-11-16
 
 ### Adicionado

@@ -1,6 +1,6 @@
 [project]
 name = "farol"
-version = "1.1.0"
+version = "1.2.0"
 description = "Farol: backtest e sinais ao vivo de opções binárias (Deriv) só com evidência estatística, sem promessa."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-assistente = ["anthropic>=2.9"]   # opcional: "Explique para mim" (precisa de ANTHROPIC_API_KEY no .env)
+assistente = ["anthropic>=2.9"]   # só para ASSISTENTE_PROVEDOR=anthropic (Ollama não precisa de pacote extra)
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

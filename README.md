@@ -144,17 +144,28 @@ sem correção, 0/80 com Bonferroni, Holm e FDR. Acerto médio no teste entre 48
 
 ## Assistente "Explique para mim" (opcional)
 
-- Desligado por padrão. Para ligar: `pip install -e ".[assistente]"`, copie `.env.example` para `.env`, preencha
-  `ANTHROPIC_API_KEY` e reinicie. A chave fica só no servidor local (nunca no navegador nem no git).
-- **Envio externo**: a cada pergunta, o Farol envia à API da Anthropic só números já calculados (ativo, tendência,
-  veredito, probabilidade estimada com faixa e amostra, break-even) e a pergunta. Banca e diário nunca saem do
-  navegador. A tela mostra esse aviso.
-- **Custo**: cada chamada é paga. Controles no `.env`: modelo (`FAROL_ASSISTENTE_MODELO`, padrão
-  `claude-opus-5-5`; Sonnet/Haiku custam menos), limite por hora (padrão 20), tempo limite e esforço. Há cache por
-  ativo + tempo gráfico + vela + pergunta, e perguntas como "devo entrar?" são recusadas sem chamar a API.
-- **Garantias** (no prompt e conferidas no código, `binarias/assistente.py`): até 5 linhas; descarta a resposta
-  se houver número, estratégia ou ativo fora do JSON, previsão ("vai subir"), recomendação ou promessa, ou se não
-  disser "sem vantagem comprovada" quando for o caso. Falha de rede, recusa ou limite = texto padrão do Farol.
+Provedor escolhido no `.env` (copie de `.env.example`) e reinicie o Farol:
+
+| `ASSISTENTE_PROVEDOR` | O que acontece |
+|---|---|
+| `desligado` (padrão) | Sem IA: o botão mostra a explicação automática do Farol. Nada é enviado. |
+| `ollama` | Modelo local no Ollama (`http://127.0.0.1:11434`), grátis; nada sai do computador. Modelo em `ASSISTENTE_MODELO` (padrão `llama3.2`), tempo limite 60 s. |
+| `anthropic` | API da Anthropic (paga, externa). Precisa de `pip install -e ".[assistente]"` e `ANTHROPIC_API_KEY`. Modelo padrão `claude-opus-5-5`, tempo limite 20 s. |
+
+- **Ollama**: instale com `winget install Ollama.Ollama` (ou https://ollama.com/download) e baixe o modelo com
+  `ollama pull llama3.2`. Se o Ollama não estiver rodando ou o modelo não existir, a tela mostra o comando exato
+  e continua funcionando com a explicação automática.
+- **Mesmas regras em qualquer provedor** (prompt do sistema + conferência no código, `binarias/assistente.py`):
+  até 5 linhas; descarta a resposta se houver número, estratégia ou ativo fora do JSON de entrada, previsão
+  ("vai subir"), recomendação de entrada ou promessa, ou se não disser "sem vantagem comprovada" quando for o
+  caso. Perguntas como "devo entrar?" são recusadas sem chamar a IA. O "pensamento" de modelos locais
+  (`<think>…</think>`) é removido antes da conferência.
+- **Privacidade**: com Ollama local, nada sai da máquina. Com Anthropic (ou Ollama em outro computador), os
+  números já calculados (ativo, tendência, veredito, probabilidade estimada com faixa e amostra, break-even) e a
+  pergunta são enviados; a tela avisa. Banca e diário nunca são enviados.
+- **Custo e controle**: cache por provedor + modelo + ativo + tempo gráfico + vela + pergunta; limite por hora
+  (`ASSISTENTE_LIMITE_HORA`); tempo limite (`ASSISTENTE_TEMPO_LIMITE`). As variáveis antigas `FAROL_ASSISTENTE_*`
+  ainda são lidas.
 
 ## Estrutura
 
@@ -221,9 +232,11 @@ futuro e confere que o sinal é exatamente "todas as condições cumpridas".
 - Entrada simulada na abertura da vela seguinte; atraso e slippage reais não são modelados.
 - Com 20 estratégias testadas, uma pode passar por sorte; a correção de Holm reduz (não elimina) esse risco e
   deixa a regra mais exigente. Use a validação.
-- Assistente: custo por chamada na API da Anthropic e envio de dados calculados a um serviço externo. A
-  validação da resposta é por regras (números, nomes, expressões proibidas): ela barra os casos previstos, mas uma
-  frase enganosa sem número nem palavra proibida pode passar. Não foi testado com uma chave real neste projeto.
+- Assistente: com Anthropic, custo por chamada e envio de dados calculados a um serviço externo. A validação
+  da resposta é por regras (números, nomes, expressões proibidas): barra os casos previstos, mas uma frase
+  enganosa sem número nem palavra proibida pode passar. Modelos locais pequenos erram mais o formato, então mais
+  respostas tendem a ser descartadas (aparece a explicação automática). Testado com servidores simulados; não foi
+  testado com um Ollama real nem com uma chave real neste projeto.
 - A API pública da Deriv derruba a conexão a cada ~2 minutos; o servidor reconecta e preenche o buraco, mas
   durante a reconexão os dados ficam alguns segundos atrasados.
 - Notificações do navegador dependem da permissão e do modo "Não perturbe" do sistema.

@@ -274,7 +274,7 @@
           <small id="assistStatus">IA desligada</small>
         </header>
         <p class="sub" id="assistIntro">O assistente <b>explica</b> o que o Farol calculou, em palavras simples. Ele não prevê o preço e não diz quando entrar: quem decide o sinal é a regra estatística.</p>
-        <p class="assist-desligado" id="assistDesligado" hidden>Ative o assistente nas configurações: coloque <code>ANTHROPIC_API_KEY</code> no arquivo <code>.env</code> e reinicie o Farol. Sem a chave, o botão mostra a explicação automática do Farol (sem IA).</p>
+        <p class="assist-desligado" id="assistDesligado" hidden><span id="assistDesligadoTxt">Ative o assistente nas configurações: no arquivo <code>.env</code>, use <code>ASSISTENTE_PROVEDOR=ollama</code> (modelo local, grátis) ou <code>anthropic</code>.</span> Enquanto isso, o botão mostra a explicação automática do Farol (sem IA).</p>
         <button type="button" class="botao botao-marca" id="btnExplicar">Explique para mim</button>
         <form class="assist-pergunta" id="formPergunta" autocomplete="off">
           <label class="campo"><span>Pergunta sobre o Farol ou um termo</span>
@@ -292,7 +292,7 @@
           <p class="assist-motivo" id="assistMotivo" hidden></p>
           <p class="assist-aviso" id="assistAviso"></p>
         </div>
-        <p class="assist-privacidade" id="assistPrivacidade"><svg class="ic" aria-hidden="true"><use href="#i-alerta"/></svg><span>Envio externo: com a IA ligada, os números já calculados pelo Farol (ativo, tendência, veredito, probabilidade estimada, break-even) e a sua pergunta vão para a API da Anthropic. Dados da banca e do diário nunca são enviados.</span></p>
+        <p class="assist-privacidade" id="assistPrivacidade"><svg class="ic" aria-hidden="true"><use href="#i-alerta"/></svg><span id="assistPrivacidadeTxt">Assistente desligado: nada é enviado. Com o Ollama, tudo roda no seu computador; com a Anthropic, os números calculados e a pergunta vão para um serviço externo.</span></p>
       </section>
       </div>
 
