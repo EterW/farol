@@ -8,11 +8,11 @@ import threading
 import webbrowser
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import assistente, avisos, demo, mercado, progresso, scanner
+from . import assistente, avisos, demo, mercado, progresso, risco, scanner
 from .config import (
     ATIVOS_SCANNER,
     EXPIRACAO_MAX,
@@ -199,6 +199,55 @@ async def _explicar(sessao: Sessao, pergunta: str) -> None:
             "pergunta": pergunta,
         }
     await sessao.enviar("assistente", **resultado, status=ajudante.status())
+
+
+async def _corpo(req: Request) -> dict:
+    try:
+        corpo = await req.json()
+    except ValueError:
+        raise ValueError("corpo não é JSON") from None
+    if not isinstance(corpo, dict):
+        raise ValueError("corpo deve ser um objeto JSON")
+    return corpo
+
+
+@app.post("/api/risco/dia")
+async def api_risco_dia(req: Request):
+    """'Minha banca': situação do dia (resultado, distância até o limite, bloqueio). Nada é gravado."""
+    try:
+        c = await _corpo(req)
+        ops = c.get("operacoes") or []
+        if not isinstance(ops, list) or len(ops) > 2000:
+            raise ValueError("operacoes deve ser uma lista (até 2000)")
+        entrada = risco.valor_entrada(c.get("banca", 0), c.get("pct", 1))
+        dia = risco.estado_dia(
+            c.get("banca_inicio", c.get("banca", 0)),
+            [o for o in ops if isinstance(o, dict)],
+            c.get("perda_max_pct", risco.PERDA_DIA_PADRAO),
+            c.get("parar_apos", risco.PARAR_APOS_PADRAO),
+            c.get("meta_pct"),
+        )
+        return {"entrada": entrada, "dia": dia}
+    except ValueError as e:
+        return JSONResponse({"erro": str(e)}, status_code=400)
+
+
+@app.post("/api/risco/simular")
+async def api_risco_simular(req: Request):
+    """Simulador 'e se' (Monte Carlo, entrada fixa, sem martingale)."""
+    try:
+        c = await _corpo(req)
+        return await asyncio.to_thread(
+            risco.simular,
+            c.get("acerto"),
+            c.get("payout", PAYOUT_PADRAO),
+            c.get("pct", 1),
+            c.get("n_operacoes", 100),
+            c.get("simulacoes", 5000),
+            c.get("limite_ruina_pct", 50),
+        )
+    except ValueError as e:
+        return JSONResponse({"erro": str(e)}, status_code=400)
 
 
 @app.get("/api/status")

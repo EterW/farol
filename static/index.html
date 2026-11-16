@@ -97,6 +97,10 @@
   <button class="botao botao-icone vb-subir" id="vbSubir" aria-label="Voltar ao veredito completo"><svg class="ic" aria-hidden="true"><use href="#i-cima"/></svg></button>
 </div>
 
+<div class="faixa-bloqueio" id="faixaBloqueio" role="alert" hidden>
+  <svg class="ic" aria-hidden="true"><use href="#i-alerta"/></svg>
+  <span><b>Limite do dia atingido: pare por hoje.</b> <span id="faixaBloqueioMotivo"></span> Os avisos de entrada estão silenciados.</span>
+</div>
 <main class="palco" id="principal" tabindex="-1">
   <!-- ============================================================ veredito -->
   <section class="veredito INICIO" id="veredito" aria-live="polite" aria-label="Veredito agora" data-tour="veredito">
@@ -255,6 +259,63 @@
           <small id="topInfo"></small>
         </header>
         <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
+      </section>
+
+      <section class="cartao banca" id="cartaoBanca" aria-labelledby="tBanca">
+        <header class="cartao-topo">
+          <h2 id="tBanca">Minha banca</h2>
+          <small>salvo só neste navegador</small>
+        </header>
+        <div class="banca-campos">
+          <label class="campo"><span>Banca inicial (R$)</span><input type="number" id="bcBanca" min="0" step="0.01" inputmode="decimal"></label>
+          <label class="campo"><span>% por operação</span><input type="number" id="bcPct" min="0.1" max="100" step="0.1" inputmode="decimal"></label>
+          <label class="campo"><span>Perda máxima do dia (%)</span><input type="number" id="bcPerda" min="0" max="100" step="0.5" inputmode="decimal"></label>
+          <label class="campo"><span>Parar após N losses seguidos</span><input type="number" id="bcParar" min="0" max="20" step="1" inputmode="numeric"></label>
+          <label class="campo"><span>Meta do dia (%, opcional)</span><input type="number" id="bcMeta" min="0" step="0.5" inputmode="decimal" placeholder="sem meta"></label>
+          <label class="campo"><span>Payout (%)</span><input type="number" id="bcPayout" min="1" max="500" step="1" inputmode="numeric"></label>
+        </div>
+        <div class="banca-entrada">
+          <span>Entrada sugerida</span><b class="numero" id="bcEntrada">—</b>
+          <small id="bcAtual"></small>
+        </div>
+        <p class="banca-aviso" id="bcAviso" hidden></p>
+        <div class="banca-dia" id="bcDia">
+          <div class="bd-linha"><span>Resultado de hoje</span><b class="numero" id="bcResultado">R$ 0,00</b></div>
+          <div class="barra-limite" id="bcBarra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Quanto do limite de perda do dia já foi usado"><i></i></div>
+          <small id="bcDistancia">Até o limite do dia: —</small>
+          <small id="bcSeq"></small>
+          <p class="banca-meta" id="bcMetaTxt" hidden></p>
+        </div>
+        <div class="banca-registro">
+          <span class="banca-rotulo">Registrar resultado (conta demo ou manual)</span>
+          <label class="campo valor"><span>Valor (R$)</span><input type="number" id="bcValor" min="0" step="0.01" inputmode="decimal"></label>
+          <div class="banca-botoes">
+            <button type="button" class="botao res-win" data-res="WIN"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>WIN</button>
+            <button type="button" class="botao res-loss" data-res="LOSS"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>LOSS</button>
+            <button type="button" class="botao" data-res="EMPATE">Empate</button>
+            <button type="button" class="botao botao-icone" id="bcDesfazer" aria-label="Desfazer o último registro" title="Desfazer o último registro">↶</button>
+          </div>
+        </div>
+        <details class="detalhes" id="bcSimulador">
+          <summary>Simulador “e se” (100 operações)</summary>
+          <div class="banca-campos">
+            <label class="campo"><span>Taxa de acerto estimada (%)</span><input type="number" id="simAcerto" min="0" max="100" step="0.1" inputmode="decimal"></label>
+            <label class="campo"><span>Operações</span><input type="number" id="simN" min="10" max="2000" step="10" value="100" inputmode="numeric"></label>
+          </div>
+          <p class="sub" id="simDica"></p>
+          <button type="button" class="botao" id="btnSimular">Simular</button>
+          <div class="sim-resultado" id="simResultado" aria-live="polite" hidden></div>
+          <p class="sub">Sem martingale: o valor de entrada é fixo. Acerto abaixo do break-even gera prejuízo em qualquer gestão.</p>
+        </details>
+        <details class="detalhes" id="bcDiario">
+          <summary>Diário de operações e curva da banca</summary>
+          <svg class="curva-banca" id="bcCurva" viewBox="0 0 300 110" preserveAspectRatio="none" role="img" aria-label="Curva da banca"></svg>
+          <ol class="diario-lista" id="bcLista"></ol>
+          <div class="banca-botoes">
+            <button type="button" class="botao" id="bcCsv">Exportar CSV</button>
+            <button type="button" class="botao" id="bcLimpar">Apagar diário</button>
+          </div>
+        </details>
       </section>
 
       <section class="cartao assistente" id="cartaoAssistente" aria-labelledby="tAssist">
