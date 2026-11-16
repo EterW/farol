@@ -755,7 +755,7 @@ function abrirAtivo(simbolo) {
 // ================================================================== operações da sessão (filtradas por ativo + tempo)
 /* Cada operação guarda o contexto (ativo + tempo gráfico + sid). "Este ativo" mostra só as do contexto
    atual (padrão); "Todas" mostra todas, cada uma com o rótulo do ativo e do tempo. Totais separados. */
-const ROTULO_RES = { WIN: "WIN", LOSS: "LOSS", EMPATE: "EMPATE", CANCELADO: "cancelada" };
+const ROTULO_RES = { WIN: "WIN", LOSS: "LOSS", EMPATE: "EMPATE", CANCELADO: "cancelada", PENDENTE: "pendente · resolvida depois" };
 const MAX_OPS = 300;
 const contextoAtual = (o) => o.simbolo === S.simbolo && o.tf === S.tf;
 function adicionarSinal(msg) {
@@ -769,8 +769,8 @@ function aplicarResultado(msg) {
   if (o) { o.resultado = msg.resultado; if (msg.principal !== undefined) o.principal = !!msg.principal; }
   desenharOps();
 }
-function cancelarPendentes() {   // trocou de ativo/tempo: o servidor registra as abertas como CANCELADO
-  for (const o of S.ops) if (!o.resultado) o.resultado = "CANCELADO";
+function cancelarPendentes() {   // trocou de ativo/tempo: as abertas ficam PENDENTE e o servidor as resolve
+  for (const o of S.ops) if (!o.resultado) o.resultado = "PENDENTE";   // depois pelas velas históricas (Deriv)
 }
 function totais(lista) {
   const t = { WIN: 0, LOSS: 0, EMPATE: 0 }, f = { WIN: 0, LOSS: 0, EMPATE: 0 };

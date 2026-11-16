@@ -199,15 +199,15 @@ def test_operacoes_filtradas_por_ativo_e_tempo_e_resposta_atrasada_ignorada(pagi
     ops = pg.evaluate("window.farol.estado().ops")
     assert [o["op"] for o in ops if o["op"] == 9001] == [9001], "a mensagem do contexto velho não pode entrar"
     assert "GBP/USD · M2" in pg.inner_text("#listaOps")
-    # troca: a operação some de "Este ativo", aparece em "Todas" com rótulo e como cancelada
+    # troca: a operação some de "Este ativo", aparece em "Todas" com rótulo e como pendente (não cancelada)
     trocar(pg, "frxEURUSD", "M5")
     esperar_pronto(pg, "frxEURUSD", "M5")
     assert "GBP/USD" not in pg.inner_text("#listaOps")
     pg.click("#opsAbaTodas")
     texto = pg.inner_text("#listaOps")
-    assert "GBP/USD · M2" in texto and "cancelada" in texto
+    assert "GBP/USD · M2" in texto and "pendente" in texto and "cancelada" not in texto
     # resultado atrasado do contexto velho não altera nada
     pg.evaluate("m => window.farol.tratar(m)", {"tipo": "resultado", "op": 9001, "resultado": "WIN", "sid": sid_gbp})
-    assert next(o for o in pg.evaluate("window.farol.estado().ops") if o["op"] == 9001)["resultado"] == "CANCELADO"
+    assert next(o for o in pg.evaluate("window.farol.estado().ops") if o["op"] == 9001)["resultado"] == "PENDENTE"
     pg.click("#opsAbaAtivo")
     assert not erros, f"erros no console: {erros}"

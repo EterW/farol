@@ -13,6 +13,9 @@ Ordem da lista (nunca pelo percentual bruto, que engana com poucas operações):
   2. limite INFERIOR do IC (o "pior caso plausível"), maior primeiro;
   3. desempate: mais operações primeiro; depois o nome.
 
+CONTROLE: Seguir cor e qualquer estratégia que dispare em mais de 30% das velas da janela são régua
+(baseline): continuam na lista e nos relatórios, mas nunca são "melhor do momento", líder ou aviso.
+
 Sempre sem martingale (gale esconde o risco e invalida a conta de break-even).
 """
 
@@ -103,6 +106,24 @@ def selo(janela: dict | None, forca: dict | None, min_ops: int = MIN_OPERACOES) 
     }
 
 
+CONTROLES_FIXOS = {"seguir_cor"}  # dispara em quase toda vela (~97%): sempre régua
+MOTIVO_CONTROLE = (
+    "CONTROLE (régua): dispara em mais de {lim:.0%} das velas ({taxa}). Continua no ranking e nos relatórios "
+    "para comparação, mas não pode ser líder nem gerar aviso."
+)
+
+
+def eh_controle(est_id: str, taxa: float | None) -> bool:
+    """Estratégia de controle: Seguir cor ou qualquer uma que dispare em mais de TAXA_MAX_PREPARO das velas."""
+    return est_id in CONTROLES_FIXOS or (taxa is not None and taxa > TAXA_MAX_PREPARO)
+
+
+def motivo_controle(taxa: float | None) -> str:
+    """Frase mostrada na tela para uma estratégia de controle."""
+    t = "—" if taxa is None else f"{taxa:.0%} nesta janela"
+    return MOTIVO_CONTROLE.format(lim=TAXA_MAX_PREPARO, taxa=t)
+
+
 def preparo_informativo(taxa: float | None) -> bool:
     """ "Se formando" só é informação quando o sinal é raro. Uma estratégia que dá sinal em quase toda vela
     (ex.: Seguir cor, ~97% das velas) estaria "se formando 100%" o tempo todo: isso não diz nada."""
@@ -188,6 +209,8 @@ def calcular_ranking(
                     "selo": selo(None, None, min_ops),
                     "taxa_sinal": None,
                     "preparo_informativo": False,
+                    "controle": est.id in CONTROLES_FIXOS,
+                    "motivo_controle": motivo_controle(None) if est.id in CONTROLES_FIXOS else None,
                 }
             )
             continue
@@ -211,6 +234,8 @@ def calcular_ranking(
                 "selo": selo(jan, forca, min_ops),
                 "taxa_sinal": taxa,
                 "preparo_informativo": preparo_informativo(taxa),
+                "controle": eh_controle(est.id, taxa),
+                "motivo_controle": motivo_controle(taxa) if eh_controle(est.id, taxa) else None,
             }
         )
     if ao_progresso:
@@ -222,7 +247,10 @@ def calcular_ranking(
         (
             l["id"]
             for l in linhas
-            if l["janela"] and l["janela"]["vantagem"] and (elegiveis is None or l["id"] in elegiveis)
+            if l["janela"]
+            and l["janela"]["vantagem"]
+            and not l.get("controle")
+            and (elegiveis is None or l["id"] in elegiveis)
         ),
         None,
     )

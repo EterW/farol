@@ -11,6 +11,7 @@ Estados:
 "Relevante" para conflito: estratégia marcada, com >= CONFLITO_MIN_OPERACOES operações decididas na
 janela e acerto (estimativa pontual) acima do break-even. Toda estratégia comprovada é relevante.
 Estratégias sem evidência nenhuma não bloqueiam a entrada, mas também nunca geram a entrada.
+Estratégias de CONTROLE (ranking.eh_controle) nunca são líder e não contam para CONFLITO.
 """
 
 from .config import CONFLITO_MIN_OPERACOES
@@ -44,6 +45,7 @@ def relevantes(
         linha
         for linha in ranking["linhas"]
         if linha["id"] != excluir
+        and not linha.get("controle")  # régua (dispara quase sempre): não bloqueia nem gera aviso
         and linha["janela"]
         and (ativas is None or linha["id"] in ativas)
         and linha["janela"]["decididas"] >= min_ops

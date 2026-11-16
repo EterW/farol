@@ -24,20 +24,10 @@ class NavFalso:
         return next(m for m in reversed(self.msgs) if m["tipo"] == tipo)
 
 
-def test_csv_com_cabecalho_antigo_e_preservado(monkeypatch, tmp_path):
-    caminho = tmp_path / "sinais.csv"
-    caminho.write_text("data_sinal,data_entrada,ativo\n2026-01-01,2026-01-01,X\n", encoding="utf-8-sig")
-    monkeypatch.setattr(sessmod, "CSV_SINAIS", str(caminho))
-    sessmod.gravar_csv(dict.fromkeys(sessmod.COLUNAS_CSV, "v"))
-    antigos = list(tmp_path.glob("sinais_antigo_*.csv"))
-    assert len(antigos) == 1 and "X" in antigos[0].read_text(encoding="utf-8-sig")
-    assert caminho.read_text(encoding="utf-8-sig").splitlines()[0] == ",".join(sessmod.COLUNAS_CSV)
-
-
 def test_sessao_ao_vivo_completa(monkeypatch, tmp_path):
     monkeypatch.setattr(sessmod, "N_HISTORICO", 300)
     monkeypatch.setattr(sessmod, "ATIVOS_SCANNER", ["frxEURUSD", "frxGBPUSD", "frxFECHADO"])
-    monkeypatch.setattr(sessmod, "CSV_SINAIS", str(tmp_path / "sinais.csv"))
+    monkeypatch.setattr(sessmod, "registro", sessmod.Registro(str(tmp_path / "sinais.csv"), str(tmp_path / "b")))
     monkeypatch.setattr(hubmod, "ESPERA_LIBERAR", 0.1)
 
     async def cenario():

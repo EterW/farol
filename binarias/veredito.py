@@ -92,6 +92,7 @@ def comprovada(linha: dict | None, break_even: float, min_ops: int) -> bool:
     j = (linha or {}).get("janela")
     return bool(
         j
+        and not (linha or {}).get("controle")  # estratégia de controle (régua) nunca é líder nem gera aviso
         and j.get("vantagem")
         and (j.get("decididas") or 0) >= min_ops
         and j.get("ic_inf") is not None
@@ -102,7 +103,11 @@ def comprovada(linha: dict | None, break_even: float, min_ops: int) -> bool:
 def candidata(ranking: dict, ativas: set | None = None) -> dict | None:
     """Melhor estratégia do momento SEM exigir vantagem (só para o modo observação).
     Usa a ordem do ranking (limite inferior do IC); prefere as marcadas, se houver alguma com dados."""
-    com_dados = [l for l in ranking.get("linhas", []) if l.get("janela") and l["janela"].get("decididas")]
+    com_dados = [
+        l
+        for l in ranking.get("linhas", [])
+        if l.get("janela") and l["janela"].get("decididas") and not l.get("controle")
+    ]
     marcadas = [l for l in com_dados if ativas is None or l["id"] in ativas]
     lista = marcadas or com_dados
     return lista[0] if lista else None

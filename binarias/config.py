@@ -42,6 +42,13 @@ PROGRESSO_PASSO_ATR = 0.05  # resolução da busca da distância até o gatilho
 # Medido em EUR/USD M5, AUD/USD M5 e R_100 M1: só Seguir cor passa do limite (Reversão ~23-25%).
 TAXA_MAX_PREPARO = 0.30
 
+# --------------------------------------------------------------------------- filtro de qualidade (só registrado)
+# DESLIGADO: o Farol registra o que o filtro teria feito; nada é aplicado sem evidência (walk-forward).
+FILTRO_QUALIDADE_ATIVO = False
+FILTRO_HORAS_LIQUIDEZ_UTC = (12, 16)  # sobreposição Londres / Nova York
+FILTRO_ATR_PERCENTIL_MIN = 20
+FILTRO_VARIACAO_MIN_ATR = 0.10
+
 # --------------------------------------------------------------------------- modo ao vivo
 N_HISTORICO = 3000  # velas do timeframe carregadas por ativo ("histórico completo" ao vivo)
 N_VELAS_GRAFICO = 600  # velas enviadas ao gráfico

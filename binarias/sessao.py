@@ -8,16 +8,13 @@ enviada leva o `sid` do contexto em que foi gerada: o navegador descarta as que 
 
 import asyncio
 import contextlib
-import csv
 import json
-import os
 import time
 from collections import OrderedDict
-from datetime import datetime, timezone
 
 import pandas as pd
 
-from . import assistente, mercado, progresso, scanner, sinal, veredito
+from . import assistente, mercado, progresso, qualidade, scanner, sinal, veredito
 from .avisos import MotorAvisos, SeletorLider, nome_ativo
 from .backtest import ConfigBacktest, resolver
 from .config import (
@@ -35,7 +32,6 @@ from .config import (
     N_HISTORICO,
     N_VELAS_GRAFICO,
     N_VELAS_PREVIA,
-    PASTA_RESULTADOS,
     PROGRESSO_LIMITE,
     PROGRESSO_LIMITE_MAX,
     PROGRESSO_LIMITE_MIN,
@@ -45,24 +41,12 @@ from .estrategias import ESTRATEGIAS, POR_ID
 from .hub import DerivHub, SerieVelas
 from .log import obter
 from .ranking import calcular_ranking
+from .registro import CSV_SINAIS, Registro, linhas_do_evento
 from .timeframes import agregar, granularidade_base, linhas_ohlc, nome_timeframe, parse_timeframe
 
 log = obter("sessao")
 
-CSV_SINAIS = os.path.join(PASTA_RESULTADOS, "sinais_ao_vivo.csv")
-COLUNAS_CSV = [
-    "data_sinal",
-    "data_entrada",
-    "ativo",
-    "timeframe",
-    "estrategia",
-    "principal",
-    "direcao",
-    "expiracao",
-    "preco_entrada",
-    "preco_saida",
-    "resultado",
-]
+registro = Registro(CSV_SINAIS)  # o servidor troca/reaproveita; os testes apontam para um arquivo temporário
 
 
 NOMES = {e.id: e.nome for e in ESTRATEGIAS}
@@ -85,26 +69,6 @@ def _ranking_em_cache(chave: tuple, calcular) -> dict:
 
 class NavegadorFechado(Exception):
     """O navegador fechou a aba/conexão: a sessão para de enviar."""
-
-
-def fmt_data(epoch: int) -> str:
-    """Epoch -> 'AAAA-MM-DD hh:mm:ss' (UTC)."""
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def gravar_csv(linha: dict) -> None:
-    """Acrescenta no CSV de sinais. Se o arquivo tiver o cabeçalho antigo, ele é renomeado."""
-    if os.path.exists(CSV_SINAIS):
-        with open(CSV_SINAIS, encoding="utf-8-sig") as f:
-            cabecalho = f.readline().strip().split(",")
-        if cabecalho != COLUNAS_CSV:
-            os.replace(CSV_SINAIS, CSV_SINAIS.replace(".csv", f"_antigo_{int(time.time())}.csv"))
-    novo = not os.path.exists(CSV_SINAIS)
-    with open(CSV_SINAIS, "a", newline="", encoding="utf-8-sig") as f:  # utf-8-sig: acentos no Excel
-        w = csv.DictWriter(f, fieldnames=COLUNAS_CSV)
-        if novo:
-            w.writeheader()
-        w.writerow(linha)
 
 
 def _limpar(o):
@@ -254,7 +218,8 @@ class Sessao:
         ]
 
     async def parar(self) -> None:
-        """Para as tarefas, libera as séries e registra operações sem resultado como CANCELADO."""
+        """Para as tarefas e libera as séries. Operações sem resultado continuam PENDENTE no registro: a
+        reconciliação (servidor/coletor) as resolve depois com as velas históricas da Deriv."""
         for t in self.tarefas:
             t.cancel()
         for t in self.tarefas:
@@ -264,8 +229,6 @@ class Sessao:
         for s, principal in self.series:
             self.hub.liberar(s, prioridade=principal)
         self.series = []
-        for op in self.operacoes.values():  # operações sem resultado ficam registradas
-            self._registrar(op, None, None, "CANCELADO")
         self.operacoes.clear()
 
     async def _proteger(self, coro, nome: str) -> None:
@@ -487,7 +450,17 @@ class Sessao:
                 saida = float(depois["close"].iat[exp - 1])
                 res = resolver(op["dir"], entrada, saida, self.cfg.empate)
                 op["t_entrada"] = int(depois["epoch"].iat[0])
-                self._registrar(op, entrada, saida, res)
+                bruto = resolver(op["dir"], entrada, saida, "devolve")  # no CSV: EMPATE separado (dado bruto)
+                registro.atualizar(
+                    {
+                        op["rid"]: {
+                            "resultado": bruto,
+                            "preco_entrada": entrada,
+                            "preco_saida": saida,
+                            "resolucao": "ao_vivo",
+                        }
+                    }
+                )
                 del self.operacoes[est_id]
                 await self.enviar(
                     "resultado",
@@ -519,7 +492,12 @@ class Sessao:
                 n_novas,
             )
 
-        # 3) registra os sinais das estratégias marcadas (teste ao vivo) — uma operação por estratégia
+        # 3) veredito desta vela (gravado junto com cada sinal, para medir o Farol depois)
+        estados = {k: {"estado": "SINAL", "dir": v} for k, v in sinais.items() if v}
+        ver = self._veredito(dec, estados)
+
+        # 4) registra os sinais das estratégias marcadas (teste ao vivo) — uma operação por estratégia
+        novos: dict[str, str] = {}
         for est_id, d in sinais.items():
             if not d:
                 continue
@@ -528,6 +506,7 @@ class Sessao:
             principal = dec["estado"] == "ENTRAR" and est_id == dec["estrategia"]
             if registrado:
                 self._seq += 1
+                novos[est_id] = d
                 self.operacoes[est_id] = {
                     "n": self._seq,
                     "id": est_id,
@@ -536,6 +515,7 @@ class Sessao:
                     "t": t,
                     "t_entrada": t + self.seg,
                     "principal": principal,
+                    "rid": "",
                 }
                 self.recentes[est_id] = {"dir": d, "ate": time.time() + self.hold}
             await self.enviar(
@@ -550,34 +530,40 @@ class Sessao:
                 ativo=self.simbolo,
                 timeframe=self.tf,
             )
+        if novos:
+            self._registrar_evento(t, novos, ranking, ver, formando)
 
-        # 4) decisão principal (fica fixa por alguns segundos se for ENTRAR/CONFLITO)
+        # 5) decisão principal (fica fixa por alguns segundos se for ENTRAR/CONFLITO)
         self.decisao_fixa = {**dec, "ate": time.time() + self.hold} if dec["estado"] in ("ENTRAR", "CONFLITO") else None
         await self._enviar_analise(ranking, analise)
-        estados = {k: {"estado": "SINAL", "dir": v} for k, v in sinais.items() if v}
-        ver = self._veredito(dec, estados)
         await self.enviar("decisao", **dec, novo=True, t=t, veredito=ver)
         await self.avisar(self.motor.fechamento(ver, t + self.seg, self.ativo, troca, NOMES))
 
-    def _registrar(self, op: dict, entrada, saida, resultado: str) -> None:
-        try:
-            gravar_csv(
-                {
-                    "data_sinal": fmt_data(op["t"]),
-                    "data_entrada": fmt_data(op["t_entrada"]),
-                    "ativo": self.simbolo,
-                    "timeframe": self.tf,
-                    "estrategia": op["nome"],
-                    "principal": "sim" if op.get("principal") else "não",
-                    "direcao": op["dir"],
-                    "expiracao": self.cfg.expiracao,
-                    "preco_entrada": "" if entrada is None else entrada,
-                    "preco_saida": "" if saida is None else saida,
-                    "resultado": resultado,
-                }
-            )
-        except OSError:
-            log.exception("Não foi possível gravar %s (arquivo aberto no Excel?)", CSV_SINAIS)
+    def _registrar_evento(
+        self, t: int, novos: dict[str, str], ranking: dict, ver: dict, formando: pd.DataFrame
+    ) -> None:
+        """Grava as operações abertas nesta vela como PENDENTE (com os campos do evento)."""
+        linhas = linhas_do_evento(
+            ativo=self.simbolo,
+            timeframe=self.tf,
+            seg=self.seg,
+            expiracao=self.cfg.expiracao,
+            payout=self.cfg.payout,
+            t_sinal=t,
+            direcoes=novos,
+            ranking=ranking,
+            lider=self.seletor.atual,
+            estado_veredito=ver.get("estado", ""),
+            principais={k for k, op in self.operacoes.items() if k in novos and op["principal"]},
+            preco_aviso=float(formando["close"].iat[-1]) if len(formando) else float(self.df["close"].iat[-1]),
+            agora=self.hub.agora(),
+            filtros=qualidade.avaliar(self.df, t + self.seg),
+            origem="navegador",
+            config_id="",
+        )
+        for l in linhas:
+            self.operacoes[l["estrategia_id"]]["rid"] = l["id"]
+        registro.adicionar(linhas)
 
     def _alvo_progresso(self) -> str | None:
         """De quem medir o progresso completo: a líder; sem líder, a candidata do modo observação."""

@@ -36,20 +36,42 @@ def contra(df):
     return _sinais(c < 0, c > 0)
 
 
+def seguir_raro(df):
+    """Segue a cor só em 1 de cada 4 velas (25% < 30%: não é controle)."""
+    c = df["close"] - df["open"]
+    vez = pd.Series(np.arange(len(df)) % 4 == 0, index=df.index)
+    return _sinais((c > 0) & vez, (c < 0) & vez)
+
+
 def test_vantagem_comprovada_eh_escolhida():
-    df = _df_previsivel(1200, acerto=0.70)
+    df = _df_previsivel(2400, acerto=0.70)
     r = rk.calcular_ranking(
         df,
         bt.ConfigBacktest(payout=0.85),
-        janela=500,
+        janela=1000,
         min_ops=100,
-        estrategias=[_est("contra", contra), _est("seguir", seguir)],
+        estrategias=[_est("contra", contra), _est("seguir_raro", seguir_raro)],
     )
-    assert r["melhor"] == "seguir"
+    assert r["melhor"] == "seguir_raro"
     top = r["linhas"][0]
-    assert top["id"] == "seguir" and top["janela"]["vantagem"]
+    assert top["id"] == "seguir_raro" and top["janela"]["vantagem"] and not top["controle"]
     assert top["janela"]["ic_inf"] > r["break_even"]
     assert not r["linhas"][1]["janela"]["vantagem"]
+
+
+def test_controle_nunca_eh_melhor_mesmo_com_vantagem():
+    """Dispara em > 30% das velas -> CONTROLE: fica no ranking, com motivo, mas não pode ser líder."""
+    df = _df_previsivel(1200, acerto=0.70)
+    r = rk.calcular_ranking(df, bt.ConfigBacktest(payout=0.85), janela=500, estrategias=[_est("seguir", seguir)])
+    linha = r["linhas"][0]
+    assert linha["janela"]["vantagem"] and linha["controle"]
+    assert "CONTROLE" in linha["motivo_controle"]
+    assert r["melhor"] is None
+    from binarias.avisos import SeletorLider
+
+    sel = SeletorLider()
+    sel.atualizar(r)
+    assert sel.atual is None
 
 
 def test_sem_vantagem_em_dado_aleatorio():

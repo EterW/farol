@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import os
 import re
 import threading
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import assistente, avisos, demo, glossario, mercado, progresso, risco, scanner
+from . import sessao as sessmod
 from .config import (
     ATIVOS_SCANNER,
     EXPIRACAO_MAX,
@@ -36,6 +38,7 @@ from .config import (
 from .estrategias import ESTRATEGIAS, EXPLICACAO
 from .hub import DerivHub
 from .log import configurar_log, obter
+from .registro import reconciliar
 from .sessao import CSV_SINAIS, NavegadorFechado, Sessao
 from .timeframes import nome_timeframe, parse_timeframe
 
@@ -75,11 +78,38 @@ def validar_assinatura(msg: dict) -> dict:
     }
 
 
+RECONCILIAR_INTERVALO = 60.0  # s entre buscas de sinais PENDENTE já vencidos
+
+
+async def reconciliar_pendentes() -> dict:
+    """Uma rodada: resolve os sinais PENDENTE vencidos com as velas históricas da Deriv."""
+    return await reconciliar(sessmod.registro, hub.pedir, hub.agora())
+
+
+async def _laco_reconciliacao() -> None:
+    """Ao abrir (sinais que ficaram pendentes da última vez) e depois a cada minuto."""
+    try:
+        await asyncio.to_thread(sessmod.registro.migrar)  # formato antigo -> novo (com backup)
+    except Exception:
+        log.exception("Falha ao converter o registro de sinais")
+    while True:
+        await hub.conectado.wait()
+        try:
+            await reconciliar_pendentes()
+        except Exception:
+            log.exception("Falha na reconciliação dos sinais pendentes")
+        await asyncio.sleep(RECONCILIAR_INTERVALO)
+
+
 @asynccontextmanager
 async def ciclo(_app):
-    """Liga a conexão com a Deriv ao subir o servidor e a desliga ao encerrar."""
+    """Liga a conexão com a Deriv (e a reconciliação dos pendentes) ao subir o servidor; desliga ao encerrar."""
     hub.iniciar()
+    tarefa = asyncio.create_task(_laco_reconciliacao())
     yield
+    tarefa.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await tarefa
     await hub.fechar()
 
 
