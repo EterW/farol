@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from . import mercado, progresso, scanner, sinal, veredito
+from . import assistente, mercado, progresso, scanner, sinal, veredito
 from .avisos import MotorAvisos, SeletorLider, nome_ativo
 from .backtest import ConfigBacktest, resolver
 from .config import (
@@ -140,6 +140,7 @@ class Sessao:
         self._seq = 0
         self._lock_envio = asyncio.Lock()
         self.fechado = False
+        self.ultimo_veredito: dict | None = None
         self.simbolo: str = ""
         self.tf: str = ""
 
@@ -196,6 +197,8 @@ class Sessao:
         lim = msg.get("limite_formacao")
         if isinstance(lim, int) and not isinstance(lim, bool) and PROGRESSO_LIMITE_MIN <= lim <= PROGRESSO_LIMITE_MAX:
             self.motor.limite = lim
+        if isinstance(msg.get("bloqueio_dia"), bool):  # "Minha banca": limite do dia atingido
+            self.motor.bloqueado = msg["bloqueio_dia"]
 
     def _com_lider(self, ranking: dict) -> dict:
         s = self.seletor
@@ -235,7 +238,9 @@ class Sessao:
         )  # quanto tempo mostrar ENTRAR AGORA / CONFLITO
         self.ranking = None
         self.seletor = SeletorLider()
-        self.motor = MotorAvisos(limite=self.motor.limite, avisar_obs=self.motor.avisar_obs)
+        self.motor = MotorAvisos(
+            limite=self.motor.limite, avisar_obs=self.motor.avisar_obs, bloqueado=self.motor.bloqueado
+        )
         self.recentes: dict[str, dict] = {}
         self.decisao_fixa: dict | None = None
         self._cache_prog: tuple = (None, None)
@@ -445,7 +450,17 @@ class Sessao:
     def _veredito(self, dec: dict, estados: dict, prog: dict | None = None) -> dict:
         humano = (self.analise or {}).get("humano")
         assert self.ranking is not None  # só é chamado depois do primeiro ranking
-        return veredito.montar(dec, self.ranking, humano, self.observacao, estados, self.ativas, prog)
+        ver = veredito.montar(dec, self.ranking, humano, self.observacao, estados, self.ativas, prog)
+        self.ultimo_veredito = ver
+        return ver
+
+    def dados_assistente(self) -> tuple[dict, tuple] | None:
+        """JSON (só dados já calculados) e chave de cache (ativo, tempo, vela) para o assistente. None = sem dados."""
+        if self.ranking is None or not getattr(self, "simbolo", None):
+            return None
+        humano = (self.analise or {}).get("humano")
+        dados = assistente.montar_dados(self.ativo, self.tf, self.ultimo_veredito, humano, self.ranking)
+        return dados, (self.simbolo, self.tf, getattr(self, "ultima_fechada", None))
 
     async def _enviar_analise(self, ranking: dict, analise: dict) -> None:
         await self.enviar("ranking", **ranking)

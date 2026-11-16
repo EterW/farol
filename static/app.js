@@ -214,6 +214,8 @@ const ESTILO_AVISO = { formando: ["prep", "i-ampulheta"], conflito: ["conf", "i-
                        observacao: ["obs", "i-olho"], resultado: ["", "i-check"] };
 /* Aviso decidido no servidor (binarias/avisos.py): mostra o texto, toca o som indicado e notifica. */
 function mostrarAviso(a, forcar = false) {
+  // "Minha banca": limite do dia atingido = avisos de entrada silenciados (o servidor também já os bloqueia)
+  if (!forcar && S.bloqueioDia && ["entrada", "formando", "observacao"].includes(a.categoria)) return;
   let [tipo, icone] = ESTILO_AVISO[a.categoria] || ["", "i-sino"];
   if (a.categoria === "entrada") { tipo = a.dir; icone = ICONE_DIR[a.dir]; }
   if (a.categoria === "resultado") icone = /LOSS/.test(a.titulo) ? "i-x" : "i-check";
@@ -817,7 +819,16 @@ function setStatus(texto, nivel = "info") {
   else if (nivel === "aviso") toast("Aviso", texto, "prep", "i-alerta", 10000);
 }
 function enviar(obj) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj)); }
-function enviarPreferencias() { enviar({ observacao: P.obs, avisar_obs: P.avisarObs, limite_formacao: S.limite }); }
+// ponte mínima para static/extras.js (assistente, banca, glossário): enviar pedidos e saber o contexto
+window.Farol = {
+  enviar,
+  conectado: () => !!(S.conectado && S.ws && S.ws.readyState === 1),
+  demo: () => !!DEMO,
+  contexto: () => ({ simbolo: S.simbolo, tf: S.tf, veredito: S.veredito, payout: S.ranking ? S.ranking.payout : null,
+                     break_even: S.ranking ? S.ranking.break_even : null, placar: null }),
+  bloqueioDia(ligado) { S.bloqueioDia = !!ligado; enviar({ bloqueio_dia: S.bloqueioDia }); },
+};
+function enviarPreferencias() { enviar({ observacao: P.obs, avisar_obs: P.avisarObs, limite_formacao: S.limite, bloqueio_dia: !!S.bloqueioDia }); }
 function abrirWs() {
   return new Promise((ok, falha) => {
     if (S.ws && S.ws.readyState === 1) { ok(); return; }
@@ -869,6 +880,7 @@ function tratar(msg) {
       if (msg.registrado) adicionarSinal(msg);
       break;
     case "resultado": aplicarResultado(msg); break;
+    case "assistente": document.dispatchEvent(new CustomEvent("farol:assistente", { detail: msg })); break;
     default: break;
   }
 }

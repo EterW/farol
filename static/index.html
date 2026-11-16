@@ -257,6 +257,33 @@
         <ol class="top-lista" id="topLista"><li class="vazio-txt">Aparece depois de conectar.</li></ol>
       </section>
 
+      <section class="cartao assistente" id="cartaoAssistente" aria-labelledby="tAssist">
+        <header class="cartao-topo">
+          <h2 id="tAssist">Explique para mim</h2>
+          <small id="assistStatus">IA desligada</small>
+        </header>
+        <p class="sub" id="assistIntro">O assistente <b>explica</b> o que o Farol calculou, em palavras simples. Ele não prevê o preço e não diz quando entrar: quem decide o sinal é a regra estatística.</p>
+        <p class="assist-desligado" id="assistDesligado" hidden>Ative o assistente nas configurações: coloque <code>ANTHROPIC_API_KEY</code> no arquivo <code>.env</code> e reinicie o Farol. Sem a chave, o botão mostra a explicação automática do Farol (sem IA).</p>
+        <button type="button" class="botao botao-marca" id="btnExplicar">Explique para mim</button>
+        <form class="assist-pergunta" id="formPergunta" autocomplete="off">
+          <label class="campo"><span>Pergunta sobre o Farol ou um termo</span>
+            <input type="text" id="inpPergunta" maxlength="200" placeholder="Ex.: O que significa ADX?"></label>
+          <button type="submit" class="botao" id="btnPerguntar">Perguntar</button>
+        </form>
+        <div class="assist-exemplos" role="group" aria-label="Perguntas de exemplo">
+          <button type="button" class="chip-pergunta">O que significa ADX?</button>
+          <button type="button" class="chip-pergunta">Por que não há sinal agora?</button>
+          <button type="button" class="chip-pergunta">O que é break-even?</button>
+        </div>
+        <div class="assist-resposta" id="assistResposta" aria-live="polite" hidden>
+          <p class="assist-fonte" id="assistFonte"></p>
+          <p class="assist-texto" id="assistTexto"></p>
+          <p class="assist-motivo" id="assistMotivo" hidden></p>
+          <p class="assist-aviso" id="assistAviso"></p>
+        </div>
+        <p class="assist-privacidade" id="assistPrivacidade"><svg class="ic" aria-hidden="true"><use href="#i-alerta"/></svg><span>Envio externo: com a IA ligada, os números já calculados pelo Farol (ativo, tendência, veredito, probabilidade estimada, break-even) e a sua pergunta vão para a API da Anthropic. Dados da banca e do diário nunca são enviados.</span></p>
+      </section>
+
       <section class="cartao ranking so-detalhado" id="cartaoRanking" aria-labelledby="tRanking">
         <header class="cartao-topo">
           <div>
@@ -270,7 +297,7 @@
           <summary>Ver números completos e escolher estratégias</summary>
           <p class="sub" id="rkCriterio"></p>
           <div class="tabela-rolagem"><table class="tabela" id="rkTabela"></table></div>
-          <p class="sub">Desmarcar uma estratégia tira ela do veredito, da liderança e do cálculo de conflito. Com 11 estratégias testadas, uma pode passar no critério por sorte; confirme com <code>python validar.py</code>.</p>
+          <p class="sub">Desmarcar uma estratégia tira ela do veredito, da liderança e do cálculo de conflito. Com muitas estratégias testadas ao mesmo tempo, uma pode passar por sorte: por isso o Farol aplica a correção de Holm. Mesmo assim, confirme com <code>python validar.py</code>.</p>
         </details>
       </section>
     </aside>
@@ -332,5 +359,6 @@
 <div class="avisos" id="toasts" aria-live="assertive"></div>
 
 <script src="/static/app.js"></script>
+<script src="/static/extras.js"></script>
 </body>
 </html>

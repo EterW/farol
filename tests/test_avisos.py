@@ -264,3 +264,15 @@ def test_ranking_real_esta_na_ordem_declarada():
     r = rk.calcular_ranking(df_aleatorio(3000, seed=4), ConfigBacktest())
     assert [rk.chave_ordem(x) for x in r["linhas"]] == sorted(rk.chave_ordem(x) for x in r["linhas"])
     assert pd.Series([rk.status(x) for x in r["linhas"]]).is_monotonic_increasing
+
+
+def test_limite_do_dia_silencia_entrada_e_formacao():
+    """'Minha banca': limite do dia atingido -> o servidor não manda aviso de entrada nem de formação."""
+    r = _ranking([_linha("a", 210, 320)])
+    m = MotorAvisos(bloqueado=True)
+    ver, av = _rodada(r, {"a": "CALL"}, "a", motor=m)
+    assert ver["estado"] == "ENTRAR" and not [a for a in av if a["categoria"] == "entrada"]
+    assert _formacao(r, "a", _prog("a", 95), motor=m)[1] == []
+    m.bloqueado = False
+    _, av = _rodada(r, {"a": "CALL"}, "a", motor=m, vela=2000)
+    assert [a for a in av if a["categoria"] == "entrada"], "desbloqueado volta a avisar"

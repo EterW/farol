@@ -1,6 +1,7 @@
 """Servidor do modo ao vivo (FastAPI + WebSocket) com UMA conexão compartilhada com a Deriv."""
 
 import argparse
+import asyncio
 import os
 import re
 import threading
@@ -11,7 +12,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import avisos, demo, mercado, progresso, scanner
+from . import assistente, avisos, demo, mercado, progresso, scanner
 from .config import (
     ATIVOS_SCANNER,
     EXPIRACAO_MAX,
@@ -40,6 +41,7 @@ from .timeframes import nome_timeframe, parse_timeframe
 
 log = obter("servidor")
 hub = DerivHub()
+ajudante = assistente.Assistente()  # desligado sem ANTHROPIC_API_KEY; cache e limite valem para todas as abas
 
 SIMBOLO_VALIDO = re.compile(r"^[A-Za-z0-9_]{1,40}$")
 SID_VALIDO = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
@@ -115,6 +117,7 @@ async def api_config():
         "scanner": ATIVOS_SCANNER,
         "criterio_mercado": mercado.CRITERIO,
         "regra_scanner": scanner.REGRA,
+        "assistente": ajudante.status(),
         "estrategias": [
             {
                 "id": e.id,
@@ -153,6 +156,51 @@ async def api_avisos_teste():
     return avisos.exemplos()
 
 
+@app.get("/api/assistente")
+async def api_assistente():
+    """Estado do assistente (ligado/desligado, modelo, chamadas restantes, aviso de privacidade). Nunca a chave."""
+    return ajudante.status()
+
+
+async def explicar(sessao: Sessao, pergunta: str) -> None:
+    """Pedido "Explique para mim" / pergunta livre (a aba pode ter fechado no meio: ignora)."""
+    try:
+        await _explicar(sessao, pergunta)
+    except NavegadorFechado:
+        pass
+    except Exception:
+        log.exception("Erro no assistente")
+
+
+async def _explicar(sessao: Sessao, pergunta: str) -> None:
+    """O JSON vem do estado da sessão (dados já calculados), nunca do navegador."""
+    pacote = sessao.dados_assistente()
+    if pacote is None:
+        await sessao.enviar(
+            "assistente",
+            fonte="sem_dados",
+            texto="Conecte um ativo e espere o ranking ficar pronto.",
+            aviso=assistente.AVISO_SEM_IA,
+            pergunta=pergunta,
+            status=ajudante.status(),
+        )
+        return
+    dados, chave = pacote
+    try:
+        resultado = await asyncio.wait_for(
+            asyncio.to_thread(ajudante.explicar, dados, chave, pergunta), ajudante.config.tempo_limite + 5
+        )
+    except TimeoutError:
+        resultado = {
+            "fonte": "erro",
+            "texto": assistente.texto_padrao(dados),
+            "aviso": assistente.AVISO_SEM_IA,
+            "motivo": "O assistente demorou demais.",
+            "pergunta": pergunta,
+        }
+    await sessao.enviar("assistente", **resultado, status=ajudante.status())
+
+
 @app.get("/api/status")
 async def api_status():
     """Diagnóstico da conexão e das séries assinadas."""
@@ -178,6 +226,7 @@ async def ws_navegador(ws: WebSocket):
     """Canal ao vivo com uma aba: recebe pedidos validados e envia velas, veredito e avisos."""
     await ws.accept()
     sessao = Sessao(ws, hub)
+    tarefas_ia: set[asyncio.Task] = set()
     try:
         while True:
             try:
@@ -196,6 +245,11 @@ async def ws_navegador(ws: WebSocket):
                     await sessao.status(f"Pedido inválido: {e}", "erro")
                     continue
                 await sessao.iniciar(**pedido)
+            elif acao == "explicar":
+                pergunta = msg.get("pergunta")
+                tarefa = asyncio.create_task(explicar(sessao, pergunta if isinstance(pergunta, str) else ""))
+                tarefas_ia.add(tarefa)  # referência guardada até terminar (não bloqueia o canal ao vivo)
+                tarefa.add_done_callback(tarefas_ia.discard)
             elif acao == "parar":
                 await sessao.parar()
                 await sessao.status("Desconectado.")

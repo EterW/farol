@@ -579,3 +579,24 @@ input[type=range] { accent-color: var(--marca); width: 100%; min-height: 28px; }
 @media (max-width: 400px) {
   .m-cartoes { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
+
+/* ------------------------------------------------------------------ assistente (explica, não prevê) */
+.assistente { display: flex; flex-direction: column; gap: 12px; }
+.assistente .cartao-topo { margin-bottom: 0; }
+.assistente .sub { margin: 0; }
+.assist-desligado { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--superficie-2); border: 1px dashed var(--linha-forte); font-size: var(--fs-pequeno); color: var(--texto-2); }
+.assist-pergunta { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.assist-pergunta input { width: 100%; min-height: 42px; padding: 8px 12px; border-radius: 12px; background: var(--superficie-2); border: 1px solid var(--linha-forte); color: var(--texto); font: inherit; font-size: var(--fs-pequeno); }
+.assist-exemplos { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-pergunta { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--linha-forte); background: transparent; color: var(--texto-2); font: inherit; font-size: var(--fs-legenda); cursor: pointer; }
+.chip-pergunta:hover { color: var(--texto); border-color: var(--marca); }
+.assist-resposta { padding: 12px 14px; border-radius: 12px; background: var(--superficie-2); border-left: 3px solid var(--marca); display: flex; flex-direction: column; gap: 6px; }
+.assist-resposta.descartada, .assist-resposta.erro, .assist-resposta.limite { border-left-color: var(--prep); }
+.assist-resposta.recusa { border-left-color: var(--conf); }
+.assist-resposta p { margin: 0; }
+.assist-fonte { font-size: var(--fs-legenda); color: var(--texto-3); }
+.assist-texto { font-size: var(--fs-texto); line-height: 1.5; white-space: pre-line; }
+.assist-motivo { font-size: var(--fs-pequeno); color: var(--prep); }
+.assist-aviso { font-size: var(--fs-legenda); color: var(--texto-3); font-style: italic; }
+.assist-privacidade { margin: 0; display: flex; gap: 8px; align-items: flex-start; font-size: var(--fs-legenda); color: var(--texto-3); line-height: 1.45; }
+.assist-privacidade .ic { flex: none; margin-top: 2px; }

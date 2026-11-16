@@ -186,6 +186,7 @@ class MotorAvisos:
 
     limite: int = PROGRESSO_LIMITE
     avisar_obs: bool = False  # candidatas não comprovadas (DESLIGADO por padrão)
+    bloqueado: bool = False  # "Minha banca": limite do dia atingido -> nenhum aviso de formação/entrada
     vela_formando: int | None = None  # vela (epoch de abertura) do último aviso de formação
     vela_entrada: int | None = None  # vela em que a entrada foi avisada
     vela_obs: int | None = None
@@ -193,7 +194,7 @@ class MotorAvisos:
 
     def formacao(self, ver: dict, progresso: dict | None, vela: int, ativo: str) -> list[dict]:
         """A cada atualização da vela em formação. `ver`: veredito montado; `vela`: epoch da vela atual."""
-        if not progresso or progresso.get("pct", 0) < self.limite:
+        if self.bloqueado or not progresso or progresso.get("pct", 0) < self.limite:
             return []
         if ver.get("estado") == "PREPARANDO" and ver.get("comprovada"):
             if vela in (self.vela_formando, self.vela_entrada):
@@ -235,6 +236,8 @@ class MotorAvisos:
             texto = f"Líder agora: {novo}" if novo else "Líder agora: nenhuma (sem vantagem comprovada)"
             saida.append(aviso("lider", "Líder agora", texto, vela=vela))
         estado = ver.get("estado")
+        if self.bloqueado and estado in ("ENTRAR", "OBSERVACAO"):
+            return saida  # limite do dia: silencia entrada e observação (troca de líder continua informada)
         if estado == "ENTRAR" and ver.get("comprovada") and ver.get("dir") and vela != self.vela_entrada:
             self.vela_entrada = vela
             d = ver["dir"]
