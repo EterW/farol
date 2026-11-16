@@ -1,6 +1,6 @@
 [project]
 name = "farol"
-version = "1.2.0"
+version = "1.3.0"
 description = "Farol: backtest e sinais ao vivo de opções binárias (Deriv) só com evidência estatística, sem promessa."
 readme = "README.md"
 requires-python = ">=3.10"

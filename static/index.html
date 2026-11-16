@@ -11,10 +11,12 @@
 <link rel="apple-touch-icon" href="/static/marca/icone-192.png">
 <link rel="stylesheet" href="/static/tema.css">
 <link rel="stylesheet" href="/static/app.css">
+<script src="/static/tema-natal.js"></script>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body class="modo-simples">
 <a class="pular" href="#principal">Pular para o conteúdo</a>
+<div class="neve" aria-hidden="true"></div>
 
 <!-- ícones (desenhados aqui, sem dependência externa; sempre acompanhados de texto ou aria-label) -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -49,7 +51,7 @@
 <!-- ============================================================ topo -->
 <header class="topo" id="topo">
   <a class="logo" href="/" aria-label="Farol, página inicial">
-    <svg class="logo-simbolo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+    <svg class="logo-simbolo logo-padrao" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
       <defs>
         <linearGradient id="hdt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c4b3ff"/><stop offset="1" stop-color="#8d6bff"/></linearGradient>
         <linearGradient id="hdf" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c9b8ff" stop-opacity=".9"/><stop offset="1" stop-color="#c9b8ff" stop-opacity=".08"/></linearGradient>
@@ -63,6 +65,7 @@
       <path d="M26 29.4h12l4.8 27.2H21.2z" fill="url(#hdt)"/>
       <path d="M24.25 39.4h15.5l.9 5.2H23.35z" fill="#09090f" opacity=".55"/>
     </svg>
+    <img class="logo-simbolo logo-natal" src="/static/marca/simbolo-natal.svg" alt="" width="42" height="42">
     <span class="logo-texto"><b>Farol</b><small>Sinais com evidência estatística, sem promessa</small></span>
   </a>
 
@@ -180,6 +183,16 @@
       <button type="button" data-letra="p" aria-pressed="false" aria-label="Letra pequena">P</button>
       <button type="button" data-letra="m" aria-pressed="true" aria-label="Letra média">M</button>
       <button type="button" data-letra="g" aria-pressed="false" aria-label="Letra grande">G</button>
+    </div>
+    <div class="grupo-tema">
+      <label><span>Tema</span>
+        <select id="selTema" aria-label="Tema visual">
+          <option value="padrao">Padrão</option>
+          <option value="natal">Natal</option>
+          <option value="auto">Automático</option>
+        </select>
+      </label>
+      <button type="button" class="botao-efeitos" id="btnEfeitos" aria-pressed="true" title="Liga ou desliga luzes e neve do tema de Natal" hidden>Efeitos</button>
     </div>
     <div class="segmentado" role="group" aria-label="Modo de visualização" data-tour="modos">
       <button type="button" id="btnSimples" class="on" aria-pressed="true">Simples</button>

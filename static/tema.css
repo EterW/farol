@@ -80,3 +80,95 @@ html[data-letra="g"] { font-size: 19px; }
 
   color-scheme: dark;
 }
+
+/* =====================================================================================
+   TEMA "NATAL" (opcional, só visual) — html[data-tema="natal"], aplicado por static/tema-natal.js.
+   Paleta: azul-noite (superfícies), dourado (marca), marfim (texto) e verde-pinheiro (só no fio das luzes e no
+   pé do farol, escuro e dessaturado). Verde/vermelho VIVOS continuam reservados a COMPRA/VENDA e WIN/LOSS:
+   --alta/--baixa e os estados (preparando, conflito, observação) NÃO mudam aqui.
+   Contraste (WCAG): texto-3 #a4a9b9 ≥ 6,1:1 até sobre --superficie-3; texto ≥ 12,7:1.
+   ===================================================================================== */
+html[data-tema="natal"] {
+  --fundo: #070d1c;
+  --fundo-brilho: #13254a;
+  --superficie: #0c1528;
+  --superficie-2: #121e35;
+  --superficie-3: #1a2a45;
+  --linha: rgba(246, 241, 228, .08);
+  --linha-forte: rgba(246, 241, 228, .17);
+
+  --texto: #f6f1e4;                 /* marfim */
+  --texto-2: #cdc7b8;
+  --texto-3: #a4a9b9;
+
+  --marca: #e9cf8a;                 /* dourado claro (distinto do âmbar de "preparando") */
+  --marca-forte: #d9b25a;
+  --marca-clara: #f2dca0;
+  --marca-suave: rgba(233, 207, 138, .14);
+  --marca-texto: #1a1405;
+
+  --pinheiro: #3f7a63;              /* decoração: só traços finos, nunca em sinal */
+  --gelo: #cfe0ff;
+
+  --grafico-fundo: #0c1528;
+  --grafico-grade: rgba(246, 241, 228, .045);
+  --grafico-texto: #a4a9b9;
+}
+
+/* logo: troca o símbolo do cabeçalho */
+.logo-natal { display: none; }
+html[data-tema="natal"] .logo-padrao { display: none; }
+html[data-tema="natal"] .logo-natal { display: block; }
+
+/* luzes sutis no pé do cabeçalho (fica DENTRO da faixa do topo: não cobre nada do conteúdo) */
+html[data-tema="natal"][data-efeitos="on"] #topo::before,
+html[data-tema="natal"][data-efeitos="on"] #topo::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none;
+}
+html[data-tema="natal"][data-efeitos="on"] #topo::before {   /* fio + metade das lâmpadas */
+  background:
+    radial-gradient(circle at 12px 4px, rgba(233, 207, 138, .85) 0 2px, transparent 2.6px) 0 0 / 96px 8px repeat-x,
+    radial-gradient(circle at 60px 4px, rgba(207, 224, 255, .75) 0 2px, transparent 2.6px) 0 0 / 96px 8px repeat-x,
+    linear-gradient(color-mix(in srgb, var(--pinheiro) 55%, transparent), color-mix(in srgb, var(--pinheiro) 55%, transparent)) 0 2px / 100% 1px no-repeat;
+}
+html[data-tema="natal"][data-efeitos="on"] #topo::after {    /* outra metade, pisca devagar */
+  background:
+    radial-gradient(circle at 36px 4px, rgba(246, 241, 228, .8) 0 2px, transparent 2.6px) 0 0 / 96px 8px repeat-x,
+    radial-gradient(circle at 84px 4px, rgba(233, 207, 138, .7) 0 2px, transparent 2.6px) 0 0 / 96px 8px repeat-x;
+  animation: natal-piscar 3.6s ease-in-out infinite alternate;
+}
+@keyframes natal-piscar { from { opacity: .25; } to { opacity: .9; } }
+
+/* neve leve: camada FIXA ATRÁS do conteúdo (z-index -1). Cartões, gráfico e veredito têm fundo opaco,
+   então a neve só aparece nas margens do fundo; pointer-events: none, nunca intercepta clique. */
+.neve { display: none; }
+html[data-tema="natal"][data-efeitos="on"] .neve {
+  display: block; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .55;
+}
+html[data-tema="natal"][data-efeitos="on"] .neve::before,
+html[data-tema="natal"][data-efeitos="on"] .neve::after { content: ""; position: absolute; inset: 0; }
+html[data-tema="natal"][data-efeitos="on"] .neve::before {
+  background-image:
+    radial-gradient(circle at 40px 60px, #f6f1e4 0 1.6px, transparent 2.2px),
+    radial-gradient(circle at 210px 150px, #f6f1e4 0 1.2px, transparent 1.8px),
+    radial-gradient(circle at 330px 300px, #cfe0ff 0 1.8px, transparent 2.4px),
+    radial-gradient(circle at 120px 340px, #f6f1e4 0 1px, transparent 1.6px);
+  background-size: 400px 400px;
+  animation: natal-neve 48s linear infinite;
+}
+html[data-tema="natal"][data-efeitos="on"] .neve::after {
+  background-image:
+    radial-gradient(circle at 70px 20px, #f6f1e4 0 1px, transparent 1.5px),
+    radial-gradient(circle at 190px 130px, #cfe0ff 0 1.2px, transparent 1.7px),
+    radial-gradient(circle at 20px 200px, #f6f1e4 0 .9px, transparent 1.4px);
+  background-size: 260px 260px; opacity: .7;
+  animation: natal-neve-2 36s linear infinite;
+}
+@keyframes natal-neve { to { background-position: 30px 400px; } }
+@keyframes natal-neve-2 { to { background-position: -26px 260px; } }
+
+/* movimento reduzido: sem neve e luzes paradas */
+@media (prefers-reduced-motion: reduce) {
+  html[data-tema="natal"] .neve { display: none !important; }
+  html[data-tema="natal"] #topo::after { animation: none !important; opacity: .6; }
+}

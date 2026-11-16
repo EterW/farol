@@ -981,6 +981,17 @@ function aplicarLetra() {
   for (const b of document.querySelectorAll(".grupo-letra button")) b.setAttribute("aria-pressed", String(b.dataset.letra === P.letra));
   if (G.chart) G.chart.applyOptions({ layout: { fontSize: TAMANHO_FONTE_GRAFICO[P.letra] } });
 }
+function aplicarCoresGrafico() {   // tema trocado (static/tema-natal.js): só cores; COMPRA/VENDA não mudam
+  if (!G.chart) return;
+  G.chart.applyOptions({
+    layout: { background: { type: "solid", color: css("--grafico-fundo") }, textColor: css("--grafico-texto") },
+    grid: { vertLines: { color: css("--grafico-grade") }, horzLines: { color: css("--grafico-grade") } },
+    crosshair: { vertLine: { color: css("--linha-forte"), labelBackgroundColor: css("--superficie-3") },
+                 horzLine: { color: css("--linha-forte"), labelBackgroundColor: css("--superficie-3") } },
+  });
+  if (G.serie) G.serie.applyOptions({ priceLineColor: css("--marca") });
+}
+document.addEventListener("farol:tema", aplicarCoresGrafico);
 function aplicarObs() {
   $("btnObs").setAttribute("aria-pressed", String(P.obs));
   $("btnObs").title = P.obs ? "Modo observação LIGADO: quando nada está comprovado, mostra a melhor candidata (não é recomendação)"

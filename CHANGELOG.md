@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0 — 2026-11-16
+
+### Adicionado
+- **Tema de Natal opcional (só visual)**: seletor *Tema* na barra de ferramentas (Padrão / Natal / Automático,
+  que liga de 1º/12 a 6/1). A escolha fica salva no navegador e vale sem recarregar. Paleta azul-noite, dourado,
+  marfim e verde-pinheiro (só em traços de decoração); verde/vermelho vivos seguem só para COMPRA/VENDA e WIN/LOSS.
+- Logo natalina (farol com estrela e feixe dourados) em `static/marca/` (`logo-natal.svg`, `simbolo-natal.svg`,
+  `favicon-natal.svg`).
+- Luzes sutis no cabeçalho e neve leve atrás do conteúdo (nunca cobre gráfico, números, veredito ou aviso de risco);
+  botão **Efeitos** para desligar; com `prefers-reduced-motion` não há neve e as luzes ficam paradas.
+- Teste: Automático nas datas certas (lógica real no Node) e aviso de risco/veredito idênticos nos dois temas.
+
 ## 1.2.0 — 2026-11-16
 
 ### Adicionado
