@@ -16,7 +16,8 @@ comprovam nada, ele diz isso e fica em silêncio.
 ## Instalar (Windows / PowerShell)
 
 ```powershell
-cd C:\Users\Win11\backtest-binarias
+git clone https://github.com/EterW/farol.git
+cd farol
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt          # só o necessário para rodar
